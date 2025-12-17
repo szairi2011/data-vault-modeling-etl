@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ScalaCompilerConfiguration">
+    <option name="separateProdTestSources" value="true" />
+    <profile name="sbt 1" modules="data-vault-modeling-etl,data-vault-modeling-etl.main,data-vault-modeling-etl.test" />
+  </component>
+</project>

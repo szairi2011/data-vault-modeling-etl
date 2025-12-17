@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!-- 
+  Hive Metastore Configuration for Apache Iceberg
+  This configuration uses Derby embedded database for local development
+  In production, use MySQL or PostgreSQL for the metastore
+-->
+<configuration>
+    <!-- Derby embedded database for local development -->
+    <property>
+        <name>javax.jdo.option.ConnectionURL</name>
+        <value>jdbc:derby:;databaseName=metastore_db;create=true</value>
+        <description>JDBC connection string for metastore database</description>
+    </property>
+    
+    <property>
+        <name>javax.jdo.option.ConnectionDriverName</name>
+        <value>org.apache.derby.jdbc.EmbeddedDriver</value>
+        <description>JDBC driver class</description>
+    </property>
+    
+    <!-- Warehouse location - where Iceberg tables are stored -->
+    <property>
+        <name>hive.metastore.warehouse.dir</name>
+        <value>file:///C:/Users/sofiane/work/learn-intellij/data-vault-modeling-etl/warehouse</value>
+        <description>Local file system path for data warehouse</description>
+    </property>
+    
+    <!-- Schema verification - disable for local development -->
+    <property>
+        <name>hive.metastore.schema.verification</name>
+        <value>false</value>
+    </property>
+    
+    <!-- Auto-create schema -->
+    <property>
+        <name>datanucleus.schema.autoCreateAll</name>
+        <value>true</value>
+    </property>
+</configuration>
+
