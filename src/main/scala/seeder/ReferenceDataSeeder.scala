@@ -1,61 +1,62 @@
 package seeder
 
 import java.sql.{Connection, DriverManager}
-import scala.util.Using
 
 /**
  * Reference Data Seeder for Banking Source System
- * 
+ *
  * This object seeds reference/master data that changes infrequently:
  * - Transaction categories (hierarchical: parent and child categories)
  * - Bank branches (physical locations)
  * - Banking products (account types, loans, credit cards)
- * 
+ *
  * This data is relatively static and serves as lookup tables for transactional data.
- * 
+ *
  * Usage:
- *   sbt "runMain seeder.ReferenceDataSeeder"
+ * sbt "runMain seeder.ReferenceDataSeeder"
  */
 object ReferenceDataSeeder {
 
   // JDBC connection parameters for PostgreSQL source system
   val jdbcUrl = "jdbc:postgresql://localhost:5432/banking_source"
   val user = "postgres"
-  val password = "postgres"
+//  val password = "postgres"
+  val password = "passw0rd"
 
   def main(args: Array[String]): Unit = {
     println("=" * 60)
     println("Starting Reference Data Seeding")
     println("=" * 60)
 
-    // Using automatically closes the connection when done
-    Using(DriverManager.getConnection(jdbcUrl, user, password)) { conn =>
-      conn.setAutoCommit(false) // Use transactions for data integrity
+    var conn:Connection = null
 
-      try {
-        // Seed in dependency order (categories first, then others)
-        seedTransactionCategories(conn)
-        seedBranches(conn)
-        seedProducts(conn)
+    try {
+      // Create JDBC connection for Scala 2.12
+      conn = DriverManager.getConnection(jdbcUrl, user, password)
+      conn.setAutoCommit(false) // Enable transaction management
 
-        conn.commit()
-        println("\n" + "=" * 60)
-        println("Reference data seeding completed successfully!")
-        println("=" * 60)
+      // Seed in dependency order (categories first, then others)
+      seedTransactionCategories(conn)
+      seedBranches(conn)
+      seedProducts(conn)
 
-      } catch {
-        case e: Exception =>
-          conn.rollback()
-          println(s"\nERROR: Failed to seed data: ${e.getMessage}")
-          e.printStackTrace()
-          throw e
-      }
-    }.get
+      conn.commit()
+      println("\n" + "=" * 60)
+      println("Reference data seeding completed successfully!")
+      println("=" * 60)
+
+    } catch {
+      case e: Exception =>
+        conn.rollback()
+        println(s"\nERROR: Failed to seed data: ${e.getMessage}")
+        e.printStackTrace()
+        throw e
+    }
   }
 
   /**
    * Seed transaction categories with hierarchical structure
-   * 
+   *
    * Categories follow a parent-child relationship pattern:
    *   - Shopping (parent)
    *     ├── Groceries (child)
@@ -63,7 +64,7 @@ object ReferenceDataSeeder {
    *   - Food & Dining (parent)
    *     ├── Restaurants (child)
    *     └── Fast Food (child)
-   * 
+   *
    * This hierarchical structure allows for flexible reporting and analysis
    * at both summary and detailed levels.
    */
@@ -133,7 +134,7 @@ object ReferenceDataSeeder {
 
   /**
    * Seed bank branch locations
-   * 
+   *
    * Creates branches in different cities across the United States.
    * Each branch has a type (RETAIL, COMMERCIAL, INVESTMENT) which determines
    * the services it offers and the types of customers it serves.
@@ -142,7 +143,7 @@ object ReferenceDataSeeder {
     println("\n[2/3] Seeding bank branches...")
 
     val stmt = conn.prepareStatement(
-      """INSERT INTO banking.branch 
+      """INSERT INTO banking.branch
          (branch_code, branch_name, branch_type, address_line1, city, state, zip_code, phone, manager_name, opening_date)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
     )
@@ -184,12 +185,12 @@ object ReferenceDataSeeder {
 
   /**
    * Seed banking products
-   * 
+   *
    * Products represent different account types and financial services:
    * - DEPOSIT: Checking and savings accounts
    * - LOAN: Personal loans, auto loans, mortgages
    * - CARD: Credit and debit cards
-   * 
+   *
    * Each product has specific terms (interest rates, fees, limits) that
    * differentiate it from other products in the same category.
    */
@@ -197,7 +198,7 @@ object ReferenceDataSeeder {
     println("\n[3/3] Seeding banking products...")
 
     val stmt = conn.prepareStatement(
-      """INSERT INTO banking.product 
+      """INSERT INTO banking.product
          (product_code, product_name, product_category, product_type, interest_rate, minimum_balance, monthly_fee, overdraft_limit, description)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"""
     )

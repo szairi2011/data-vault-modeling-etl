@@ -1,33 +1,35 @@
 package seeder
 
 import java.sql.{Connection, DriverManager, Timestamp}
-import scala.util.{Random, Using}
 import java.time.{LocalDateTime, LocalDate}
+import scala.util.Random
+
 
 /**
  * Transactional Data Seeder for Banking Source System
- * 
+ *
  * This object seeds transactional data that changes frequently:
  * - Customers (individuals and businesses)
  * - Accounts (checking, savings, loans, credit cards)
  * - Transactions with multiple items (like e-commerce orders)
- * 
+ *
  * KEY FEATURE: Transactions can have multiple items, similar to how an e-commerce order
  * has multiple line items. For example:
  *   - A bill payment transaction might pay electricity, water, and internet (3 items)
  *   - A shopping withdrawal might include groceries, pharmacy, and gas (3 items)
- * 
+ *
  * This design demonstrates how Data Vault handles one-to-many relationships effectively.
- * 
+ *
  * Usage:
- *   sbt "runMain seeder.TransactionalDataSeeder"
+ * sbt "runMain seeder.TransactionalDataSeeder"
  */
 object TransactionalDataSeeder {
 
   // JDBC connection parameters for PostgreSQL source system
   val jdbcUrl = "jdbc:postgresql://localhost:5432/banking_source"
   val user = "postgres"
-  val password = "postgres"
+//  val password = "postgres"
+  val password = "passw0rd"
   val random = new Random(42) // Fixed seed for reproducibility in testing
 
   def main(args: Array[String]): Unit = {
@@ -35,42 +37,44 @@ object TransactionalDataSeeder {
     println("Starting Transactional Data Seeding")
     println("=" * 60)
 
-    Using(DriverManager.getConnection(jdbcUrl, user, password)) { conn =>
-      conn.setAutoCommit(false) // Use transactions for data integrity
+    var conn: Connection = null
 
-      try {
-        // STEP 1: Get reference data IDs (branches, products, categories)
-        println("\n[Step 1/4] Loading reference data...")
-        val branchIds = getBranchIds(conn)
-        val productIds = getProductIds(conn)
-        val categoryIds = getCategoryIds(conn)
-        println(s"  ✓ Loaded ${branchIds.size} branches, ${productIds.values.map(_.size).sum} products, ${categoryIds.size} categories")
+    try {
 
-        // STEP 2: Seed customers (1000 customers: 90% individual, 10% business)
-        println("\n[Step 2/4] Seeding customers...")
-        val customerIds = seedCustomers(conn, 1000)
+      conn = DriverManager.getConnection(jdbcUrl, user, password)
+      conn.setAutoCommit(false) // Enable transaction management
 
-        // STEP 3: Seed accounts (each customer gets 1-3 accounts)
-        println("\n[Step 3/4] Seeding accounts...")
-        val accountIds = seedAccounts(conn, customerIds, branchIds, productIds)
+      // STEP 1: Get reference data IDs (branches, products, categories)
+      println("\n[Step 1/4] Loading reference data...")
+      val branchIds = getBranchIds(conn)
+      val productIds = getProductIds(conn)
+      val categoryIds = getCategoryIds(conn)
+      println(s"  ✓ Loaded ${branchIds.size} branches, ${productIds.values.map(_.size).sum} products, ${categoryIds.size} categories")
 
-        // STEP 4: Seed transactions with multiple items (5000 transactions)
-        println("\n[Step 4/4] Seeding transactions with items...")
-        seedTransactionsWithItems(conn, accountIds, categoryIds, 5000)
+      // STEP 2: Seed customers (1000 customers: 90% individual, 10% business)
+      println("\n[Step 2/4] Seeding customers...")
+      val customerIds = seedCustomers(conn, 1000)
 
-        conn.commit()
-        println("\n" + "=" * 60)
-        println("Transactional data seeding completed successfully!")
-        println("=" * 60)
+      // STEP 3: Seed accounts (each customer gets 1-3 accounts)
+      println("\n[Step 3/4] Seeding accounts...")
+      val accountIds = seedAccounts(conn, customerIds, branchIds, productIds)
 
-      } catch {
-        case e: Exception =>
-          conn.rollback()
-          println(s"\nERROR: Failed to seed data: ${e.getMessage}")
-          e.printStackTrace()
-          throw e
-      }
-    }.get
+      // STEP 4: Seed transactions with multiple items (5000 transactions)
+      println("\n[Step 4/4] Seeding transactions with items...")
+      seedTransactionsWithItems(conn, accountIds, categoryIds, 5000)
+
+      conn.commit()
+      println("\n" + "=" * 60)
+      println("Transactional data seeding completed successfully!")
+      println("=" * 60)
+
+    } catch {
+      case e: Exception =>
+        conn.rollback()
+        println(s"\nERROR: Failed to seed data: ${e.getMessage}")
+        e.printStackTrace()
+        throw e
+    }
   }
 
   /**
@@ -90,14 +94,14 @@ object TransactionalDataSeeder {
   def getProductIds(conn: Connection): Map[String, Seq[Int]] = {
     val rs = conn.createStatement().executeQuery("SELECT product_id, product_category FROM banking.product")
     Iterator.continually(rs).takeWhile(_.next())
-      .map(rs => (rs.getString("product_category"), rs.getInt("product_id")))
-      .toSeq
-      .groupBy(_._1)
-      .view.mapValues(_.map(_._2)).toMap
+      .map(entry => (entry.getString("product_category"), entry.getInt("product_id")))
+      .toSeq // Returns
+      .groupBy(_._1) // Returns Map("DEPOSIT" -> Seq((DEPOSIT,1), (DEPOSIT,2)), "LOAN" -> Seq((LOAN,4), ...))
+      .map { case (cat, tuples) => cat -> tuples.map(_._2) } // Returns Map("DEPOSIT" -> Seq(1,2), "LOAN" -> Seq(4,5), ...)
   }
 
   /**
-   * Retrieve category IDs mapped by their codes
+   * Retrieve transaction category IDs mapped by their codes
    * Returns: Map("CAT-GROCERY" -> 5, "CAT-ELECTRIC" -> 7, ...)
    * Used to assign categories to transaction items
    */
@@ -110,36 +114,36 @@ object TransactionalDataSeeder {
 
   /**
    * Seed customer records with realistic attributes
-   * 
+   *
    * Generates both individual and business customers with appropriate attributes:
    * - Individuals: first_name, last_name, SSN, date_of_birth
    * - Businesses: business_name, tax_id
-   * 
+   *
    * Each customer is assigned:
    * - Loyalty tier (STANDARD, SILVER, GOLD, PLATINUM)
    * - Credit score (300-850 for individuals, 400-850 for businesses)
    * - Preferred contact method (EMAIL, PHONE, SMS, MAIL)
-   * 
-   * @param conn Database connection
+   *
+   * @param conn  Database connection
    * @param count Number of customers to create
    * @return Sequence of created customer IDs
    */
   def seedCustomers(conn: Connection, count: Int): Seq[Int] = {
     val stmt = conn.prepareStatement(
-      """INSERT INTO banking.customer 
-         (customer_number, customer_type, first_name, last_name, business_name, email, phone, 
+      """INSERT INTO banking.customer
+         (customer_number, customer_type, first_name, last_name, business_name, email, phone,
           date_of_birth, ssn, tax_id, credit_score, customer_since, loyalty_tier, preferred_contact_method)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING customer_id"""
     )
 
     // Sample data for generating realistic names
-    val firstNames = Array("James", "Mary", "John", "Patricia", "Robert", "Jennifer", "Michael", "Linda", 
-                           "William", "Barbara", "David", "Elizabeth", "Richard", "Susan", "Joseph", "Jessica",
-                           "Thomas", "Sarah", "Charles", "Karen", "Christopher", "Nancy", "Daniel", "Lisa")
+    val firstNames = Array("James", "Mary", "John", "Patricia", "Robert", "Jennifer", "Michael", "Linda",
+      "William", "Barbara", "David", "Elizabeth", "Richard", "Susan", "Joseph", "Jessica",
+      "Thomas", "Sarah", "Charles", "Karen", "Christopher", "Nancy", "Daniel", "Lisa")
     val lastNames = Array("Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis",
-                          "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", "Wilson", "Anderson", "Thomas",
-                          "Taylor", "Moore", "Jackson", "Martin", "Lee", "Thompson", "White", "Harris")
+      "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", "Wilson", "Anderson", "Thomas",
+      "Taylor", "Moore", "Jackson", "Martin", "Lee", "Thompson", "White", "Harris")
     val loyaltyTiers = Array("STANDARD", "SILVER", "GOLD", "PLATINUM")
     val contactMethods = Array("EMAIL", "PHONE", "SMS", "MAIL")
 
@@ -187,11 +191,11 @@ object TransactionalDataSeeder {
       val rs = stmt.executeQuery()
       rs.next()
       val customerId = rs.getInt("customer_id")
-      
+
       // Progress indicator every 200 customers
       if (i % 200 == 0) println(s"  ✓ Created $i customers...")
-      
-      customerId
+
+      customerId //
     }
 
     println(s"  ✓ Total customers created: ${customerIds.size}")
@@ -202,28 +206,28 @@ object TransactionalDataSeeder {
 
   /**
    * Seed account records
-   * 
+   *
    * Each customer receives 1-3 accounts with varying product types:
    * - 50% DEPOSIT accounts (checking/savings)
    * - 30% CARD accounts (credit cards)
    * - 20% LOAN accounts (personal loans, mortgages)
-   * 
+   *
    * Account balances are generated realistically:
    * - DEPOSIT: $100 - $50,000 (positive balance)
    * - CARD: $0 - $5,000 (negative = amount owed)
    * - LOAN: $10,000 - $200,000 (negative = amount owed)
-   * 
-   * @param conn Database connection
+   *
+   * @param conn        Database connection
    * @param customerIds List of customer IDs to create accounts for
-   * @param branchIds List of branch IDs to assign accounts to
-   * @param productIds Map of product category to product IDs
+   * @param branchIds   List of branch IDs to assign accounts to
+   * @param productIds  Map of product category to product IDs
    * @return Sequence of created account IDs
    */
-  def seedAccounts(conn: Connection, customerIds: Seq[Int], branchIds: Seq[Int], 
+  def seedAccounts(conn: Connection, customerIds: Seq[Int], branchIds: Seq[Int],
                    productIds: Map[String, Seq[Int]]): Seq[Int] = {
     val stmt = conn.prepareStatement(
-      """INSERT INTO banking.account 
-         (account_number, customer_id, product_id, branch_id, account_status, 
+      """INSERT INTO banking.account
+         (account_number, customer_id, product_id, branch_id, account_status,
           current_balance, available_balance, opened_date)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING account_id"""
@@ -241,15 +245,15 @@ object TransactionalDataSeeder {
         // Distribute accounts across product types realistically
         val productCategory = random.nextInt(10) match {
           case n if n < 5 => "DEPOSIT" // 50% checking/savings
-          case n if n < 8 => "CARD"    // 30% credit cards
-          case _          => "LOAN"    // 20% loans
+          case n if n < 8 => "CARD" // 30% credit cards
+          case _ => "LOAN" // 20% loans
         }
 
         val products = productIds(productCategory)
         val productId = products(random.nextInt(products.size))
         val branchId = branchIds(random.nextInt(branchIds.size))
         val status = statuses(random.nextInt(statuses.length))
-        
+
         // Generate realistic balance based on product type
         val balance = productCategory match {
           case "DEPOSIT" => // Positive balance for deposits
@@ -276,7 +280,7 @@ object TransactionalDataSeeder {
         accountIds += rs.getInt("account_id")
         accountCounter += 1
       }
-      
+
       // Progress indicator
       if (accountIds.size % 500 == 0) println(s"  ✓ Created ${accountIds.size} accounts...")
     }
@@ -287,50 +291,50 @@ object TransactionalDataSeeder {
 
   /**
    * Seed transactions with multiple items (E-COMMERCE PATTERN)
-   * 
+   *
    * This is the KEY FEATURE that demonstrates multi-item transactions:
-   * 
+   *
    * Example 1 - Bill Payment Transaction:
-   *   Transaction Header: TXN-2025-000123, Type=PAYMENT, Total=$250.00
-   *   Items:
+   * Transaction Header: TXN-2025-000123, Type=PAYMENT, Total=$250.00
+   * Items:
    *     1. Electricity bill - $100.00
-   *     2. Water bill - $50.00
-   *     3. Internet bill - $100.00
-   * 
+   *        2. Water bill - $50.00
+   *        3. Internet bill - $100.00
+   *
    * Example 2 - Shopping Withdrawal:
-   *   Transaction Header: TXN-2025-000124, Type=WITHDRAWAL, Total=$175.50
-   *   Items:
+   * Transaction Header: TXN-2025-000124, Type=WITHDRAWAL, Total=$175.50
+   * Items:
    *     1. Groceries at Whole Foods - $120.00
-   *     2. Pharmacy at CVS - $30.50
-   *     3. Gas at Shell - $25.00
-   * 
+   *        2. Pharmacy at CVS - $30.50
+   *        3. Gas at Shell - $25.00
+   *
    * This design mirrors e-commerce order structures and demonstrates how
    * Data Vault handles one-to-many relationships effectively.
-   * 
+   *
    * Distribution:
    * - PAYMENT transactions: 1-5 items (multiple bills)
    * - WITHDRAWAL transactions: 1-3 items (multiple purchases)
    * - Other transactions: 1 item (single transaction)
-   * 
-   * @param conn Database connection
-   * @param accountIds List of account IDs to create transactions for
+   *
+   * @param conn        Database connection
+   * @param accountIds  List of account IDs to create transactions for
    * @param categoryIds Map of category codes to IDs
-   * @param count Number of transactions to create
+   * @param count       Number of transactions to create
    */
-  def seedTransactionsWithItems(conn: Connection, accountIds: Seq[Int], 
+  def seedTransactionsWithItems(conn: Connection, accountIds: Seq[Int],
                                 categoryIds: Map[String, Int], count: Int): Unit = {
 
     val txnStmt = conn.prepareStatement(
-      """INSERT INTO banking.transaction_header 
-         (transaction_number, account_id, transaction_type, transaction_status, total_amount, 
+      """INSERT INTO banking.transaction_header
+         (transaction_number, account_id, transaction_type, transaction_status, total_amount,
           transaction_date, posting_date, channel, description)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING transaction_id"""
     )
 
     val itemStmt = conn.prepareStatement(
-      """INSERT INTO banking.transaction_item 
-         (transaction_id, item_sequence, category_id, item_amount, item_description, 
+      """INSERT INTO banking.transaction_item
+         (transaction_id, item_sequence, category_id, item_amount, item_description,
           payee_name, merchant_name, is_recurring)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)"""
     )
@@ -349,63 +353,63 @@ object TransactionalDataSeeder {
       val txnType = txnTypes(random.nextInt(txnTypes.length))
       val status = statuses(random.nextInt(statuses.length))
       val channel = channels(random.nextInt(channels.length))
-      
+
       // Transaction date within last 90 days (simulates 3 months of activity)
       val daysAgo = random.nextInt(90)
       val txnDate = Timestamp.valueOf(LocalDateTime.now().minusDays(daysAgo))
 
       // *** KEY LOGIC: Determine number of items based on transaction type ***
       val numItems = txnType match {
-        case "PAYMENT"    => 1 + random.nextInt(5)  // 1-5 items (multiple bills paid together)
-        case "WITHDRAWAL" => 1 + random.nextInt(3)  // 1-3 items (multiple purchases in one transaction)
-        case _            => 1                       // Single item for deposits, transfers, fees
+        case "PAYMENT" => 1 + random.nextInt(5) // 1-5 items (multiple bills paid together)
+        case "WITHDRAWAL" => 1 + random.nextInt(3) // 1-3 items (multiple purchases in one transaction)
+        case _ => 1 // Single item for deposits, transfers, fees
       }
 
       // Generate transaction items with realistic amounts and categories
       val items = (1 to numItems).map { itemSeq =>
         val (amount, category, description, payee, merchant, isRecurring) = txnType match {
-          
+
           case "PAYMENT" =>
             // Simulate bill payment - utilities, credit card payments, etc.
             random.nextInt(3) match {
               case 0 => // Electricity bill
                 val utility = utilities(random.nextInt(utilities.length))
-                (50 + random.nextDouble() * 200, categoryIds("CAT-ELECTRIC"), 
-                 s"Electric utility bill item $itemSeq", utility, null, random.nextBoolean())
+                (50 + random.nextDouble() * 200, categoryIds("CAT-ELECTRIC"),
+                  s"Electric utility bill item $itemSeq", utility, null, random.nextBoolean())
               case 1 => // Internet/phone bill
-                (40 + random.nextDouble() * 100, categoryIds("CAT-INTERNET"), 
-                 s"Internet service payment item $itemSeq", utilities(random.nextInt(utilities.length)), null, true)
+                (40 + random.nextDouble() * 100, categoryIds("CAT-INTERNET"),
+                  s"Internet service payment item $itemSeq", utilities(random.nextInt(utilities.length)), null, true)
               case _ => // Water bill
-                (30 + random.nextDouble() * 80, categoryIds("CAT-WATER"), 
-                 s"Water bill payment item $itemSeq", "Water Department", null, true)
+                (30 + random.nextDouble() * 80, categoryIds("CAT-WATER"),
+                  s"Water bill payment item $itemSeq", "Water Department", null, true)
             }
-          
+
           case "WITHDRAWAL" =>
             // Simulate shopping - groceries, restaurants, gas, etc.
             if (random.nextBoolean()) {
               val store = groceryStores(random.nextInt(groceryStores.length))
-              (20 + random.nextDouble() * 150, categoryIds("CAT-GROCERY"), 
-               s"Grocery purchase item $itemSeq", null, store, false)
+              (20 + random.nextDouble() * 150, categoryIds("CAT-GROCERY"),
+                s"Grocery purchase item $itemSeq", null, store, false)
             } else {
               val restaurant = restaurants(random.nextInt(restaurants.length))
-              (15 + random.nextDouble() * 100, categoryIds("CAT-RESTAURANT"), 
-               s"Restaurant purchase item $itemSeq", null, restaurant, false)
+              (15 + random.nextDouble() * 100, categoryIds("CAT-RESTAURANT"),
+                s"Restaurant purchase item $itemSeq", null, restaurant, false)
             }
-          
+
           case "DEPOSIT" =>
             // Salary deposit or other income
-            (1000 + random.nextDouble() * 4000, categoryIds("CAT-SALARY"), 
-             "Payroll deposit", "Employer Inc", null, true)
-          
+            (1000 + random.nextDouble() * 4000, categoryIds("CAT-SALARY"),
+              "Payroll deposit", "Employer Inc", null, true)
+
           case "TRANSFER" =>
             // Internal transfer between accounts
-            (100 + random.nextDouble() * 1000, categoryIds("CAT-INTERNAL"), 
-             "Internal account transfer", null, null, false)
-          
+            (100 + random.nextDouble() * 1000, categoryIds("CAT-INTERNAL"),
+              "Internal account transfer", null, null, false)
+
           case "FEE" =>
             // Bank service fee
-            (5 + random.nextDouble() * 30, categoryIds.values.head, 
-             "Bank service fee", "Bank", null, false)
+            (5 + random.nextDouble() * 30, categoryIds.values.head,
+              "Bank service fee", "Bank", null, false)
         }
 
         (amount, category, description, payee, merchant, isRecurring, itemSeq)
@@ -451,18 +455,18 @@ object TransactionalDataSeeder {
 
     conn.commit()
     println(s"  ✓ Total transactions created: $count")
-    
+
     // Calculate and display statistics
     val avgItemsQuery = conn.createStatement().executeQuery(
-      """SELECT AVG(item_count)::numeric(10,2) as avg_items 
+      """SELECT AVG(item_count)::numeric(10,2) as avg_items
          FROM (SELECT COUNT(*) as item_count FROM banking.transaction_item GROUP BY transaction_id) t"""
     )
     avgItemsQuery.next()
     val avgItems = avgItemsQuery.getBigDecimal("avg_items")
     println(s"  ✓ Average items per transaction: $avgItems")
-    
+
     val multiItemQuery = conn.createStatement().executeQuery(
-      """SELECT COUNT(DISTINCT transaction_id) as multi_item_count 
+      """SELECT COUNT(DISTINCT transaction_id) as multi_item_count
          FROM (SELECT transaction_id, COUNT(*) as cnt FROM banking.transaction_item GROUP BY transaction_id HAVING COUNT(*) > 1) t"""
     )
     multiItemQuery.next()
