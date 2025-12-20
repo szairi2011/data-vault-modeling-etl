@@ -1,0 +1,94 @@
+{
+  "type": "record",
+  "name": "TransactionHeader",
+  "namespace": "com.banking.source",
+  "doc": "Transaction header (parent record) representing a single transaction event. Can have multiple child transaction_item records (e-commerce pattern). Example: One bill payment transaction with 3 separate bills as line items.",
+  "fields": [
+    {
+      "name": "transaction_id",
+      "type": "int",
+      "doc": "Primary key from source system (business key for Data Vault Hub_Transaction)."
+    },
+    {
+      "name": "account_id",
+      "type": "int",
+      "doc": "Foreign key to account table. The account from which this transaction was initiated."
+    },
+    {
+      "name": "transaction_number",
+      "type": "string",
+      "doc": "User-facing transaction reference number (format: TXN-YYYY-NNNNNN). Unique identifier for customer inquiries and dispute resolution."
+    },
+    {
+      "name": "transaction_type",
+      "type": {
+        "type": "enum",
+        "name": "TransactionType",
+        "symbols": ["DEPOSIT", "WITHDRAWAL", "PAYMENT", "TRANSFER", "FEE", "INTEREST"],
+        "default": "DEPOSIT"
+      },
+      "doc": "High-level transaction category. DEPOSIT: Incoming funds. WITHDRAWAL: ATM/teller cash out. PAYMENT: Bill payment, merchant purchase. TRANSFER: Between accounts. FEE: Service charge. INTEREST: Interest credit/debit."
+    },
+    {
+      "name": "transaction_date",
+      "type": "int",
+      "logicalType": "date",
+      "doc": "Date when transaction occurred (transaction date, not posting date). Used for daily aggregations and time-series analysis."
+    },
+    {
+      "name": "posting_date",
+      "type": "int",
+      "logicalType": "date",
+      "doc": "Date when transaction was posted to account balance. Can differ from transaction_date due to processing delays (e.g., weekend transactions post on Monday)."
+    },
+    {
+      "name": "total_amount",
+      "type": {
+        "type": "bytes",
+        "logicalType": "decimal",
+        "precision": 15,
+        "scale": 2
+      },
+      "doc": "Total transaction amount (sum of all line items). Positive for credits (deposits), negative for debits (withdrawals, payments)."
+    },
+    {
+      "name": "description",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Transaction description shown to customer on statement (e.g., 'ATM Withdrawal', 'Online Bill Payment - Multiple Bills'). Max 200 characters."
+    },
+    {
+      "name": "channel",
+      "type": {
+        "type": "enum",
+        "name": "TransactionChannel",
+        "symbols": ["ATM", "BRANCH", "ONLINE", "MOBILE", "PHONE", "AUTO"],
+        "default": "ONLINE"
+      },
+      "doc": "Channel through which transaction was initiated. Used for channel analytics and fraud detection (e.g., unusual ATM locations)."
+    },
+    {
+      "name": "status",
+      "type": {
+        "type": "enum",
+        "name": "TransactionStatus",
+        "symbols": ["PENDING", "POSTED", "DECLINED", "REVERSED"],
+        "default": "POSTED"
+      },
+      "doc": "Transaction lifecycle status. PENDING: Authorized but not settled. POSTED: Completed and reflected in balance. DECLINED: Authorization failed. REVERSED: Posted then reversed (e.g., refund, error correction)."
+    },
+    {
+      "name": "created_at",
+      "type": "long",
+      "logicalType": "timestamp-millis",
+      "doc": "Timestamp when transaction record was created in source system. Used for transaction ordering and reconciliation."
+    },
+    {
+      "name": "updated_at",
+      "type": "long",
+      "logicalType": "timestamp-millis",
+      "doc": "CDC tracking field. Last modification timestamp."
+    }
+  ]
+}
+

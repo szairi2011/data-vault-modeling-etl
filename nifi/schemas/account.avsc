@@ -1,0 +1,114 @@
+{
+  "type": "record",
+  "name": "Account",
+  "namespace": "com.banking.source",
+  "doc": "Account master data from source PostgreSQL. Represents checking accounts, savings accounts, credit cards, and loans associated with customers.",
+  "fields": [
+    {
+      "name": "account_id",
+      "type": "int",
+      "doc": "Primary key from source system (business key for Data Vault Hub_Account)."
+    },
+    {
+      "name": "customer_id",
+      "type": "int",
+      "doc": "Foreign key to customer table. Used to create Link_Customer_Account in Data Vault."
+    },
+    {
+      "name": "account_number",
+      "type": "string",
+      "doc": "Customer-facing account number (format: XXXX-XXXX-XXXX-XXXX). Used for account identification in statements and UI."
+    },
+    {
+      "name": "account_type",
+      "type": {
+        "type": "enum",
+        "name": "AccountType",
+        "symbols": ["CHECKING", "SAVINGS", "CREDIT_CARD", "LOAN"],
+        "default": "CHECKING"
+      },
+      "doc": "Type of account. Determines applicable business rules (e.g., overdraft for checking, interest calculation for savings)."
+    },
+    {
+      "name": "product_id",
+      "type": "int",
+      "doc": "Foreign key to product reference table. Links to specific product offering (e.g., 'Premier Checking', 'High Yield Savings')."
+    },
+    {
+      "name": "branch_id",
+      "type": "int",
+      "doc": "Foreign key to branch reference table. Home branch where account was opened."
+    },
+    {
+      "name": "balance",
+      "type": {
+        "type": "bytes",
+        "logicalType": "decimal",
+        "precision": 15,
+        "scale": 2
+      },
+      "doc": "Current account balance in USD. Decimal(15,2) for precision (supports up to $999,999,999,999.99). Positive for assets (checking/savings), negative for liabilities (loans)."
+    },
+    {
+      "name": "available_balance",
+      "type": {
+        "type": "bytes",
+        "logicalType": "decimal",
+        "precision": 15,
+        "scale": 2
+      },
+      "doc": "Available balance (balance minus pending transactions and holds). Used for overdraft protection and authorization decisions."
+    },
+    {
+      "name": "currency_code",
+      "type": "string",
+      "default": "USD",
+      "doc": "ISO 4217 currency code (3 letters). Default USD. Supports multi-currency accounts in future."
+    },
+    {
+      "name": "interest_rate",
+      "type": ["null", {
+        "type": "bytes",
+        "logicalType": "decimal",
+        "precision": 5,
+        "scale": 4
+      }],
+      "default": null,
+      "doc": "Annual interest rate as decimal (e.g., 0.0325 = 3.25%). NULL for non-interest-bearing accounts. Used for interest calculation in business vault."
+    },
+    {
+      "name": "credit_limit",
+      "type": ["null", {
+        "type": "bytes",
+        "logicalType": "decimal",
+        "precision": 15,
+        "scale": 2
+      }],
+      "default": null,
+      "doc": "Credit limit for CREDIT_CARD and LOAN accounts. NULL for CHECKING/SAVINGS. Used to calculate available credit."
+    },
+    {
+      "name": "opened_date",
+      "type": "int",
+      "logicalType": "date",
+      "doc": "Date when account was opened. Used to calculate account age in analytics."
+    },
+    {
+      "name": "account_status",
+      "type": {
+        "type": "enum",
+        "name": "AccountStatus",
+        "symbols": ["ACTIVE", "INACTIVE", "FROZEN", "CLOSED"],
+        "default": "ACTIVE"
+      },
+      "doc": "Current status. ACTIVE: Normal operations. INACTIVE: No transactions >12 months. FROZEN: Temporary block (fraud, legal hold). CLOSED: Permanently closed."
+    },
+    {
+      "name": "updated_at",
+      "type": "long",
+      "logicalType": "timestamp-millis",
+      "doc": "CDC tracking field. Timestamp of last modification in milliseconds since epoch."
+    }
+  ]
+}
+

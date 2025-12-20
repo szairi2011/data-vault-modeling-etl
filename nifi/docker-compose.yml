@@ -1,0 +1,127 @@
+###################################################################################
+# Docker Compose - Schema Registry Standalone (OPTIONAL - PRODUCTION ONLY)
+###################################################################################
+#
+# ⚠️  IMPORTANT: Docker is NOT required for local development!
+#
+# This file is provided for:
+# - Production deployments
+# - Environments where Docker is available
+# - Cloud deployments (Kubernetes, ECS, etc.)
+#
+# FOR LOCAL WINDOWS DEVELOPMENT:
+# Use Windows native Confluent Schema Registry instead (NO Docker needed!)
+# See: docs/01_setup_guide.md for Windows native setup
+#
+# PURPOSE:
+# Run Confluent Schema Registry in standalone mode (containerized).
+#
+# WHY STANDALONE MODE:
+# - No Kafka dependency (simpler setup)
+# - Stores schemas in internal storage (file-based)
+# - Perfect for development/POC
+# - REST API compatible with production registry
+#
+# ARCHITECTURE:
+# ┌─────────────────────────────────────────────────────────────────┐
+# │  Confluent Schema Registry (Standalone)                         │
+# ├─────────────────────────────────────────────────────────────────┤
+# │                                                                 │
+# │  ┌────────────┐    REST API     ┌──────────────┐              │
+# │  │  NiFi      │ ←──────────────→ │  Registry    │              │
+# │  │  Processor │    GET/POST      │  (Port 8081) │              │
+# │  └────────────┘    schemas       └───────┬──────┘              │
+# │                                           │                      │
+# │                                           ↓                      │
+# │                                  ┌─────────────────┐            │
+# │                                  │  File Storage   │            │
+# │                                  │  (schemas.json) │            │
+# │                                  └─────────────────┘            │
+# │                                                                 │
+# └─────────────────────────────────────────────────────────────────┘
+#
+# USAGE:
+#   # Start registry
+#   docker-compose -f nifi/docker-compose.yml up -d
+#
+#   # Verify
+#   curl http://localhost:8081/
+#
+#   # Register schema
+#   curl -X POST http://localhost:8081/subjects/banking.customer-value/versions \
+#     -H "Content-Type: application/vnd.schemaregistry.v1+json" \
+#     -d @nifi/schemas/customer.avsc
+#
+# PORTS:
+#   8081 - Schema Registry REST API
+#
+###################################################################################
+
+version: '3.8'
+
+services:
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.5.0
+    container_name: banking-schema-registry
+    hostname: schema-registry
+    ports:
+      - "8081:8081"
+    environment:
+      # Standalone mode configuration
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+
+      # Use in-memory storage (no Kafka)
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://localhost:9092
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC: _schemas
+
+      # Compatibility settings
+      SCHEMA_REGISTRY_SCHEMA_COMPATIBILITY_LEVEL: backward
+
+      # COMPATIBILITY LEVELS:
+      # - backward: New schema can read old data (safe for consumers)
+      # - forward: Old schema can read new data (safe for producers)
+      # - full: Both backward and forward (most restrictive)
+      # - none: No validation (not recommended)
+
+      # Log level
+      SCHEMA_REGISTRY_LOG4J_ROOT_LOGLEVEL: WARN
+    volumes:
+      - schema-registry-data:/var/lib/schema-registry
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Connect to host services (NiFi, PostgreSQL on Windows)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  schema-registry-data:
+    driver: local
+
+###################################################################################
+# ALTERNATIVE: Windows Native Schema Registry
+###################################################################################
+#
+# If you prefer running Schema Registry natively on Windows:
+#
+# 1. Download Confluent Platform Community Edition:
+#    https://www.confluent.io/download/
+#
+# 2. Extract to C:\confluent-7.5.0
+#
+# 3. Edit etc\schema-registry\schema-registry.properties:
+#    listeners=http://0.0.0.0:8081
+#    kafkastore.bootstrap.servers=PLAINTEXT://localhost:9092
+#
+# 4. Start:
+#    C:\confluent-7.5.0\bin\windows\schema-registry-start.bat ^
+#      etc\schema-registry\schema-registry.properties
+#
+# 5. Test:
+#    curl http://localhost:8081/
+#
+###################################################################################
+

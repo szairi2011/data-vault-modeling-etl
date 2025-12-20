@@ -1,0 +1,93 @@
+{
+  "type": "record",
+  "name": "TransactionItem",
+  "namespace": "com.banking.source",
+  "doc": "Transaction line item (child record) representing individual components of a multi-item transaction. Example: In a bill payment transaction with total $250, there might be 3 items: Electricity $100, Water $50, Internet $100. This enables e-commerce style analytics (basket analysis, category spending).",
+  "fields": [
+    {
+      "name": "item_id",
+      "type": "int",
+      "doc": "Primary key for transaction item. Composite business key: (transaction_id, item_sequence) for Data Vault."
+    },
+    {
+      "name": "transaction_id",
+      "type": "int",
+      "doc": "Foreign key to transaction_header. Links item to parent transaction. Used to create Link_Transaction_Item in Data Vault."
+    },
+    {
+      "name": "item_sequence",
+      "type": "int",
+      "doc": "Sequence number within transaction (1, 2, 3...). Preserves item ordering for display and reconciliation."
+    },
+    {
+      "name": "item_amount",
+      "type": {
+        "type": "bytes",
+        "logicalType": "decimal",
+        "precision": 15,
+        "scale": 2
+      },
+      "doc": "Line item amount. Sum of all items should equal transaction_header.total_amount. Individual item amounts used for category-level spending analysis."
+    },
+    {
+      "name": "category_id",
+      "type": ["null", "int"],
+      "default": null,
+      "doc": "Foreign key to category reference table. Enables categorization (e.g., 'Utilities > Electricity', 'Entertainment > Streaming'). NULL if not categorized. Used for spending analysis and budgeting features."
+    },
+    {
+      "name": "merchant_name",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Merchant or payee name for this line item (e.g., 'Con Edison', 'Netflix', 'Starbucks'). Used for merchant analytics and personalized offers. Max 100 characters."
+    },
+    {
+      "name": "merchant_category_code",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "ISO 18245 Merchant Category Code (MCC) - 4 digit code assigned by payment networks (e.g., '5411' = Grocery Stores, '5812' = Restaurants). Used for industry-standard categorization and fraud detection (unusual MCC patterns)."
+    },
+    {
+      "name": "item_description",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Detailed description of line item (e.g., 'Electric Bill - Account #123456789', 'Monthly Subscription Fee'). Shown in transaction detail view. Max 200 characters."
+    },
+    {
+      "name": "reference_number",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "External reference number (e.g., merchant transaction ID, bill account number, check number). Used for reconciliation with external systems and dispute resolution."
+    },
+    {
+      "name": "quantity",
+      "type": ["null", "int"],
+      "default": null,
+      "doc": "Quantity for this line item (e.g., number of items purchased in e-commerce). NULL for single-unit transactions. Future use for retail analytics."
+    },
+    {
+      "name": "unit_price",
+      "type": ["null", {
+        "type": "bytes",
+        "logicalType": "decimal",
+        "precision": 15,
+        "scale": 2
+      }],
+      "default": null,
+      "doc": "Price per unit. item_amount = quantity * unit_price. NULL for non-itemized transactions. Enables price trend analysis."
+    },
+    {
+      "name": "created_at",
+      "type": "long",
+      "logicalType": "timestamp-millis",
+      "doc": "Timestamp when item record was created. Used for item-level audit trail."
+    },
+    {
+      "name": "updated_at",
+      "type": "long",
+      "logicalType": "timestamp-millis",
+      "doc": "CDC tracking field. Last modification timestamp for incremental extraction."
+    }
+  ]
+}
+
