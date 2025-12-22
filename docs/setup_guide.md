@@ -17,6 +17,7 @@
 - [Stage 4: Silver Layer (Business Vault)](#stage-4-silver-layer-business-vault)
 - [Stage 5: Gold Layer (Dimensional Model)](#stage-5-gold-layer-dimensional-model)
 - [Stage 6: Schema Evolution Scenario](#stage-6-schema-evolution-scenario)
+- [Stage 7: Query Engine Benchmarking](#stage-7-query-engine-benchmarking)
 
 ### Part III: Reference
 - [Quick Commands](#quick-commands)
@@ -1313,6 +1314,399 @@ spark.sql("""
 ❌ Fixed schema in target tables  
 ❌ Dashboards expecting 13 columns  
 ❌ Historical data lost or NULL-backfilled  
+
+---
+
+## Stage 7: Query Engine Benchmarking
+
+### Context from Previous Stage
+✅ Complete pipeline with all layers (Bronze, Silver, Gold)  
+✅ Schema evolution demonstration complete  
+✅ Data ready for analytical queries  
+
+### Purpose of This Stage
+Compare **three query engines** on identical datasets to understand performance trade-offs:
+- **Spark SQL** - General-purpose distributed processing
+- **Hive on Tez** - Optimized batch execution
+- **Impala** - MPP for low-latency analytics
+
+This benchmarking study provides empirical data for choosing the right query engine based on your workload characteristics.
+
+---
+
+### Prerequisites for Benchmarking
+
+#### Required Software
+
+In addition to the base prerequisites, you need:
+
+```powershell
+# Verify Spark is ready (already installed)
+spark-shell --version
+
+# Install Hive on Tez (if not already installed)
+# Download from: https://hive.apache.org/downloads.html
+# Tez: https://tez.apache.org/releases/
+
+# Install Impala (Windows via Docker or native build)
+# Download from: https://impala.apache.org/downloads.html
+# OR use Cloudera quickstart VM
+```
+
+**Configuration Files:**
+- `config/hive-site.xml` - Configure Tez execution engine
+- `config/impala-shell.conf` - Impala connection settings
+- `config/benchmark-config.yml` - Benchmark parameters
+
+---
+
+### Benchmark Query Suite
+
+The benchmark uses **5 standardized queries** across complexity levels:
+
+#### Query 1: Simple Aggregation (Baseline)
+```sql
+-- Count customers by loyalty tier
+SELECT 
+    loyalty_tier,
+    COUNT(*) as customer_count,
+    AVG(total_balance) as avg_balance
+FROM gold.dim_customer
+WHERE current_flag = TRUE
+GROUP BY loyalty_tier
+ORDER BY avg_balance DESC;
+```
+
+**Tests:** Basic aggregation, single table scan
+
+---
+
+#### Query 2: Complex Join (Customer 360)
+```sql
+-- Customer 360 view with account details
+SELECT 
+    c.customer_id,
+    c.full_name,
+    c.loyalty_tier,
+    COUNT(DISTINCT a.account_id) as account_count,
+    SUM(a.balance) as total_balance,
+    COUNT(t.transaction_id) as transaction_count
+FROM gold.dim_customer c
+LEFT JOIN gold.dim_account a ON c.customer_id = a.customer_id
+LEFT JOIN gold.fact_transaction t ON a.account_id = t.account_id
+WHERE c.current_flag = TRUE
+GROUP BY c.customer_id, c.full_name, c.loyalty_tier
+HAVING total_balance > 10000
+ORDER BY total_balance DESC
+LIMIT 100;
+```
+
+**Tests:** Multi-table joins, aggregations, filtering
+
+---
+
+#### Query 3: Temporal Query (Point-in-Time)
+```sql
+-- Account balances at specific point in time
+SELECT 
+    p.customer_id,
+    p.account_id,
+    s.balance,
+    s.account_status,
+    s.load_date
+FROM silver.pit_account p
+JOIN bronze.sat_account s 
+    ON p.account_hkey = s.account_hkey 
+    AND p.sat_account_ldts = s.load_date
+WHERE p.snapshot_date = '2024-12-01'
+    AND s.balance > 5000
+ORDER BY s.balance DESC;
+```
+
+**Tests:** PIT table joins, temporal filtering, Data Vault pattern
+
+---
+
+#### Query 4: Multi-Item Transaction Analysis
+```sql
+-- Analyze multi-item transactions
+SELECT 
+    th.transaction_id,
+    th.transaction_date,
+    th.total_amount,
+    COUNT(ti.item_id) as item_count,
+    STRING_AGG(ti.merchant_name, ', ') as merchants,
+    SUM(ti.item_amount) as items_total
+FROM gold.fact_transaction_header th
+JOIN gold.fact_transaction_item ti 
+    ON th.transaction_id = ti.transaction_id
+WHERE th.transaction_type = 'PAYMENT'
+GROUP BY th.transaction_id, th.transaction_date, th.total_amount
+HAVING item_count > 1
+ORDER BY total_amount DESC
+LIMIT 50;
+```
+
+**Tests:** One-to-many relationships, string aggregations
+
+---
+
+#### Query 5: Schema Evolution Query
+```sql
+-- Query spanning old and new schema (with loyalty_tier)
+SELECT 
+    c.customer_id,
+    c.email,
+    c.loyalty_tier,  -- New field (NULL for historical records)
+    c.valid_from,
+    CASE 
+        WHEN c.loyalty_tier IS NULL THEN 'Pre-Loyalty Era'
+        ELSE c.loyalty_tier
+    END as tier_status
+FROM gold.dim_customer c
+WHERE c.customer_id IN (1, 10, 100, 500)
+ORDER BY c.valid_from;
+```
+
+**Tests:** NULL handling, schema evolution resilience
+
+---
+
+### Actions
+
+#### 7.1: Setup Benchmark Environment
+
+**Create benchmark directories:**
+```powershell
+# Create benchmark query directory
+New-Item -ItemType Directory -Force -Path "sample_queries\benchmarks"
+
+# Create results directory
+New-Item -ItemType Directory -Force -Path "warehouse\benchmark_results"
+```
+
+**Save benchmark queries:**
+Save each query above as:
+- `sample_queries\benchmarks\01_simple_aggregation.sql`
+- `sample_queries\benchmarks\02_complex_join.sql`
+- `sample_queries\benchmarks\03_temporal_query.sql`
+- `sample_queries\benchmarks\04_multi_item_analysis.sql`
+- `sample_queries\benchmarks\05_schema_evolution.sql`
+
+---
+
+#### 7.2: Configure Query Engines
+
+**Spark SQL Configuration** (`config/spark-benchmark.conf`):
+```properties
+spark.sql.adaptive.enabled=true
+spark.sql.adaptive.coalescePartitions.enabled=true
+spark.sql.autoBroadcastJoinThreshold=10485760
+spark.executor.memory=4g
+spark.driver.memory=2g
+```
+
+**Hive on Tez Configuration** (`config/hive-site.xml` additions):
+```xml
+<property>
+  <name>hive.execution.engine</name>
+  <value>tez</value>
+</property>
+<property>
+  <name>hive.tez.container.size</name>
+  <value>4096</value>
+</property>
+```
+
+**Impala Configuration** (`config/impala-shell.conf`):
+```properties
+[impala]
+impalad_host=localhost
+impalad_port=21000
+use_kerberos=false
+```
+
+---
+
+#### 7.3: Run Benchmarks
+
+**Option A: Manual Execution (Learning Mode)**
+
+**Spark SQL:**
+```powershell
+# Start Spark shell with Iceberg
+spark-shell --packages org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.4.0 `
+  --conf spark.sql.catalog.spark_catalog=org.apache.iceberg.spark.SparkCatalog `
+  --conf spark.sql.catalog.spark_catalog.type=hive
+
+# In Spark shell:
+scala> val startTime = System.nanoTime()
+scala> spark.sql("""
+  SELECT loyalty_tier, COUNT(*) as customer_count
+  FROM gold.dim_customer
+  WHERE current_flag = TRUE
+  GROUP BY loyalty_tier
+""").show()
+scala> val duration = (System.nanoTime() - startTime) / 1e9d
+scala> println(s"Execution time: $duration seconds")
+```
+
+**Hive on Tez:**
+```powershell
+beeline -u "jdbc:hive2://localhost:10000" -n sofiane
+
+# In Beeline:
+!set hive.execution.engine tez;
+SELECT loyalty_tier, COUNT(*) as customer_count
+FROM gold.dim_customer
+WHERE current_flag = TRUE
+GROUP BY loyalty_tier;
+```
+
+**Impala:**
+```powershell
+impala-shell
+
+# In Impala shell:
+INVALIDATE METADATA;  -- Refresh table metadata
+SELECT loyalty_tier, COUNT(*) as customer_count
+FROM gold.dim_customer
+WHERE current_flag = TRUE
+GROUP BY loyalty_tier;
+```
+
+---
+
+**Option B: Automated Benchmarking (Production Mode)**
+
+**Create benchmark runner script** (`scripts/windows/06-run-benchmarks.ps1`):
+
+```powershell
+# Run all benchmark queries across all engines
+sbt "runMain benchmark.BenchmarkRunner --engines spark,hive,impala --queries all --iterations 3"
+```
+
+This will:
+1. Load all queries from `sample_queries/benchmarks/`
+2. Execute each query 3 times on each engine
+3. Measure: execution time, CPU usage, memory consumption
+4. Generate comparison report
+
+---
+
+#### 7.4: Collect and Analyze Results
+
+**View raw results:**
+```powershell
+# Spark results
+Get-Content warehouse\benchmark_results\spark_results.csv
+
+# Hive Tez results
+Get-Content warehouse\benchmark_results\hive_tez_results.csv
+
+# Impala results
+Get-Content warehouse\benchmark_results\impala_results.csv
+```
+
+**Generate comparison report:**
+```powershell
+sbt "runMain benchmark.ReportGenerator"
+```
+
+**Output:** `warehouse\benchmark_results\comparison_report.html`
+
+**Expected metrics in report:**
+- **Execution Time** - Average query duration (cold and warm runs)
+- **Resource Utilization** - CPU/Memory consumption
+- **Throughput** - Queries per minute
+- **Concurrency** - Multi-user performance
+
+---
+
+### Expected Results
+
+| Query Type | Spark SQL | Hive Tez | Impala | Winner |
+|------------|-----------|----------|--------|--------|
+| Simple Aggregation | ~2-3s | ~4-5s | ~0.5-1s | Impala |
+| Complex Join | ~5-7s | ~8-10s | ~3-4s | Impala |
+| Temporal Query | ~6-8s | ~10-12s | ~4-5s | Impala |
+| Multi-Item Analysis | ~4-6s | ~7-9s | ~2-3s | Impala |
+| Schema Evolution | ~3-5s | ~6-8s | ~1-2s | Impala |
+
+**Key Insights:**
+- ⚡ **Impala** wins on query latency (MPP architecture)
+- 🔄 **Spark SQL** best for mixed workloads (query + ETL)
+- 📦 **Hive Tez** best for batch processing (cost-effective)
+
+---
+
+### Observations & Learnings
+
+**When to Use Each Engine:**
+
+| Scenario | Best Choice | Why |
+|----------|-------------|-----|
+| Ad-hoc analytics (BI tools) | Impala | Low latency, high concurrency |
+| Complex ETL + analytics | Spark SQL | Unified processing, in-memory |
+| Large batch jobs (cost-sensitive) | Hive Tez | Efficient resource usage |
+| Real-time dashboards | Impala | Sub-second responses |
+| Machine learning pipelines | Spark SQL | MLlib integration |
+
+**Performance Tuning Tips:**
+- **Impala**: Keep statistics updated (`COMPUTE STATS`)
+- **Spark**: Enable adaptive query execution (AQE)
+- **Hive Tez**: Configure container sizes based on data volume
+
+---
+
+### Verification
+
+**Confirm benchmarking complete:**
+
+```powershell
+# Check all result files exist
+Test-Path warehouse\benchmark_results\spark_results.csv
+Test-Path warehouse\benchmark_results\hive_tez_results.csv
+Test-Path warehouse\benchmark_results\impala_results.csv
+Test-Path warehouse\benchmark_results\comparison_report.html
+
+# View summary
+sbt "runMain benchmark.ResultCollector --summary"
+```
+
+**Expected output:**
+```
+Benchmark Summary:
+==================
+Total Queries: 5
+Engines Tested: 3
+Total Executions: 45 (5 queries × 3 engines × 3 iterations)
+
+Performance Winner by Category:
+- Latency: Impala (avg 2.1s)
+- Throughput: Impala (28 queries/min)
+- Resource Efficiency: Hive Tez (lowest CPU/memory)
+- Versatility: Spark SQL (supports UDFs, ML)
+```
+
+---
+
+### Next Steps
+
+**For Supervisor Presentation:**
+
+1. **Open comparison report:** `warehouse\benchmark_results\comparison_report.html`
+2. **Key talking points:**
+   - Impala is 2-3x faster for interactive queries
+   - Spark SQL offers best flexibility for mixed workloads
+   - Hive Tez is most cost-effective for batch processing
+3. **Recommendation matrix:** Based on use case (see table above)
+
+**For Further Exploration:**
+- Test with larger datasets (10M+ rows)
+- Benchmark concurrent users (5, 10, 20 users)
+- Compare cost per query across engines
+- Test with different data formats (Parquet vs Iceberg vs ORC)
 
 ---
 
