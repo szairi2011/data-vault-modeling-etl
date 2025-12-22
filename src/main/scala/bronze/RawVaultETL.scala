@@ -17,26 +17,27 @@ package bronze
  * - Temporal tracking (satellitehistory)
  * - Idempotent ETL design
  *
- * ETL FLOW:
- * ```
- * Avro Files (Staging) → Read & Validate → Generate Hash Keys
- *     ↓
- * Load Hubs (Deduped business keys)
- *     ↓
- * Load Links (Relationships)
- *     ↓
- * Load Satellites (Descriptive attributes with history)
- *     ↓
- * Update Load Metadata (Audit trail)
- * ```
+ * ETL FLOW EXAMPLE:
+ *   Avro Files (Staging) -> Read & Validate -> Generate Hash Keys
+ *      |
+ *      v
+ *   Load Hubs (Deduped business keys)
+ *      |
+ *      v
+ *   Load Links (Relationships)
+ *      |
+ *      v
+ *   Load Satellites (Descriptive attributes with history)
+ *      |
+ *      v
+ *   Update Load Metadata (Audit trail)
  *
  * DATA VAULT LOADING PRINCIPLES:
- * 1. **Insert-Only**: Never update or delete (immutable)
- * 2. **Idempotent**: Re-running produces same result
- * 3. **Incremental**: Load only new/changed data
- * 4. **Temporal**: Full history preserved in satellites
- * 5. **Atomic**: All-or-nothing transaction
- *
+ * 1. Insert-Only: Never update or delete (immutable)
+ * 2. Idempotent: Re-running produces same result
+ * 3. Incremental: Load only new/changed data
+ * 4. Temporal: Full history preserved in satellites
+ * 5. Atomic: All-or-nothing transaction
  * ========================================================================
  */
 
@@ -80,11 +81,11 @@ object RawVaultETL {
          |""".stripMargin)
 
     // Initialize Spark Session with Iceberg support
-    implicit val spark = createSparkSession()
+    implicit val spark: SparkSession = createSparkSession()
 
     try {
       // Create Raw Vault tables if not exist
-      RawVaultSchema.createAllTables()
+      bronze.RawVaultSchema.createAllTables()
 
       // Process entities
       entity match {
@@ -164,11 +165,7 @@ object RawVaultETL {
          |└────────────────────────────────────────────────────────────────┘
          |""".stripMargin)
 
-    val loadId = LoadMetadata.startLoad(
-      entityName = "customer",
-      recordSource = "PostgreSQL",
-      loadDate = LocalDate.now()
-    )
+    val loadId = LoadMetadata.startLoad("customer", "PostgreSQL", LocalDate.now())
 
     try {
       // STEP 1: Read staged Avro files
@@ -365,11 +362,7 @@ object RawVaultETL {
          |└────────────────────────────────────────────────────────────────┘
          |""".stripMargin)
 
-    val loadId = LoadMetadata.startLoad(
-      entityName = "account",
-      recordSource = "PostgreSQL",
-      loadDate = LocalDate.now()
-    )
+    val loadId = LoadMetadata.startLoad("account", "PostgreSQL", LocalDate.now())
 
     try {
       val stagingPath = "warehouse/staging/account/*.avro"
@@ -588,11 +581,7 @@ object RawVaultETL {
          |""".stripMargin)
 
     // Process transaction headers
-    val headerLoadId = LoadMetadata.startLoad(
-      entityName = "transaction_header",
-      recordSource = "PostgreSQL",
-      loadDate = LocalDate.now()
-    )
+    val headerLoadId = LoadMetadata.startLoad("transaction_header", "PostgreSQL", LocalDate.now())
 
     try {
       val headerPath = "warehouse/staging/transaction_header/*.avro"
@@ -623,11 +612,7 @@ object RawVaultETL {
     }
 
     // Process transaction items (multi-item pattern)
-    val itemLoadId = LoadMetadata.startLoad(
-      entityName = "transaction_item",
-      recordSource = "PostgreSQL",
-      loadDate = LocalDate.now()
-    )
+    val itemLoadId = LoadMetadata.startLoad("transaction_item", "PostgreSQL", LocalDate.now())
 
     try {
       val itemPath = "warehouse/staging/transaction_item/*.avro"
@@ -689,4 +674,3 @@ object RawVaultETL {
     0L
   }
 }
-

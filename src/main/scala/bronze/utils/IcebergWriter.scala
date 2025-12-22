@@ -106,21 +106,19 @@ object IcebergWriter {
     """.stripMargin)
 
     // Write operation with Iceberg format
-    val writer = df.writeTo(tableIdentifier)
-      .using("iceberg") // Specifies Iceberg table format
-
-    // Apply partitioning if specified
-    val partitionedWriter = if (partitionCols.nonEmpty) {
-      // Hidden partitioning: Iceberg extracts partition values from data
-      // No need for explicit PARTITION BY in queries
-      writer.partitionedBy(partitionCols.head, partitionCols.tail: _*)
-    } else {
+    val writer = df.write.format("iceberg")
+    if (partitionCols.nonEmpty) {
+      // Partitioned write: data will be physically organized by these columns
       writer
+        .partitionBy(partitionCols: _*)
+        .mode("append")
+        .save(tableIdentifier)
+    } else {
+      // Non-partitioned write
+      writer
+        .mode("append")
+        .save(tableIdentifier)
     }
-
-    // Execute append operation
-    // This is ATOMIC - either all data is committed or none
-    partitionedWriter.append()
 
     /**
      * WHAT JUST HAPPENED (Internals):
@@ -197,24 +195,16 @@ object IcebergWriter {
       )
 
       // Create table with Iceberg format
-      var creator = emptyDF.writeTo(tableIdentifier)
-        .using("iceberg")
-        .tableProperty("format-version", "2") // Iceberg v2 (row-level deletes)
-        .tableProperty("write.parquet.compression-codec", "snappy")
-
-      // Add custom table properties
-      tableProperties.foreach { case (key, value) =>
-        creator = creator.tableProperty(key, value)
+      val writer = emptyDF.write.format("iceberg")
+      if (partitionCols.nonEmpty) {
+        // Partitioned table creation
+        writer.partitionBy(partitionCols: _*)
       }
-
-      // Apply partitioning
-      val partitionedCreator = if (partitionCols.nonEmpty) {
-        creator.partitionedBy(partitionCols.head, partitionCols.tail: _*)
-      } else {
-        creator
-      }
-
-      partitionedCreator.create()
+      writer.options(tableProperties)
+        .option("format-version", "2")
+        .option("write.parquet.compression-codec", "snappy")
+        .mode("overwrite")
+        .save(tableIdentifier)
 
       println(s"✅ Created table: $tableIdentifier")
 
@@ -266,9 +256,7 @@ object IcebergWriter {
     """.stripMargin)
 
     // Dynamic overwrite mode: only overwrites partitions present in df
-    df.writeTo(tableIdentifier)
-      .using("iceberg")
-      .overwritePartitions()
+    df.write.format("iceberg").mode("overwrite").save(tableIdentifier)
 
     println(s"✅ Successfully overwrote partitions in $tableIdentifier")
   }
@@ -460,9 +448,10 @@ object IcebergWriter {
     val compactedDF = df.repartition(10) // Adjust based on data size
 
     // Overwrite entire table with compacted files
-    compactedDF.writeTo(tableIdentifier)
-      .using("iceberg")
-      .overwritePartitions()
+    compactedDF.write
+      .format("iceberg")
+      .mode("overwrite")
+      .save(tableIdentifier)
 
     println(s"✅ Compacted data files in $tableIdentifier")
   }
@@ -510,4 +499,3 @@ object IcebergWriter {
     ).show(false)
   }
 }
-

@@ -163,7 +163,7 @@ object TransactionalDataSeeder {
         stmt.setString(7, f"555${random.nextInt(10000000)}%07d")
         // Age between 18 and 70 years old
         stmt.setDate(8, java.sql.Date.valueOf(
-          LocalDate.now().minusYears(18 + random.nextInt(52))
+          LocalDate.now().minusYears(18 + random.nextInt(52).toLong)
         ))
         stmt.setString(9, f"${random.nextInt(1000000000)}%09d") // SSN (9 digits)
         stmt.setNull(10, java.sql.Types.VARCHAR) // No tax ID
@@ -183,7 +183,7 @@ object TransactionalDataSeeder {
 
       // Common attributes for all customers
       stmt.setDate(12, java.sql.Date.valueOf(
-        LocalDate.now().minusYears(1 + random.nextInt(10)) // Customer for 1-10 years
+        LocalDate.now().minusYears((1 + random.nextInt(10)).toLong) // Customer for 1-10 years
       ))
       stmt.setString(13, loyaltyTiers(random.nextInt(loyaltyTiers.length)))
       stmt.setString(14, contactMethods(random.nextInt(contactMethods.length)))
@@ -272,7 +272,7 @@ object TransactionalDataSeeder {
         stmt.setBigDecimal(6, balance.bigDecimal)
         stmt.setBigDecimal(7, balance.bigDecimal) // Available = current for simplicity
         stmt.setDate(8, java.sql.Date.valueOf(
-          LocalDate.now().minusYears(random.nextInt(5)) // Account opened 0-5 years ago
+          LocalDate.now().minusYears(random.nextInt(5).toLong) // Account opened 0-5 years ago
         ))
 
         val rs = stmt.executeQuery()
@@ -356,7 +356,7 @@ object TransactionalDataSeeder {
 
       // Transaction date within last 90 days (simulates 3 months of activity)
       val daysAgo = random.nextInt(90)
-      val txnDate = Timestamp.valueOf(LocalDateTime.now().minusDays(daysAgo))
+      val txnDate = Timestamp.valueOf(LocalDateTime.now().minusDays(daysAgo.toLong))
 
       // *** KEY LOGIC: Determine number of items based on transaction type ***
       val numItems = txnType match {
@@ -474,4 +474,3 @@ object TransactionalDataSeeder {
     println(s"  ✓ Transactions with multiple items: $multiItemCount (${(multiItemCount.toDouble / count * 100).toInt}%)")
   }
 }
-

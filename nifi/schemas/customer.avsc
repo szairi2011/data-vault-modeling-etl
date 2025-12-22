@@ -2,102 +2,113 @@
   "type": "record",
   "name": "Customer",
   "namespace": "com.banking.source",
-  "doc": "Customer master data from source PostgreSQL. This schema represents the structure of customer records extracted via NiFi CDC. Schema evolution: V1 (initial), V2 adds loyalty_tier field.",
+  "doc": "Customer master data from source PostgreSQL. This schema matches the structure of the banking.customer table for NiFi CDC and Data Vault ingestion.",
   "fields": [
     {
       "name": "customer_id",
       "type": "int",
-      "doc": "Primary key from source system (business key for Data Vault Hub). This ID is stable and never changes, making it suitable for hash key generation."
+      "doc": "Primary key from source system (technical surrogate key, never changes)."
+    },
+    {
+      "name": "customer_number",
+      "type": "string",
+      "doc": "Business key for Data Vault Hub. Human-readable customer reference (e.g., CUS-000001). Unique and required."
     },
     {
       "name": "customer_type",
-      "type": {
-        "type": "enum",
-        "name": "CustomerType",
-        "symbols": ["INDIVIDUAL", "BUSINESS"],
-        "default": "INDIVIDUAL"
-      },
-      "doc": "Type of customer - INDIVIDUAL for person, BUSINESS for company. Determines which fields are required (e.g., first_name vs company_name)."
+      "type": "string",
+      "doc": "INDIVIDUAL or BUSINESS. Determines which fields are required."
     },
     {
       "name": "first_name",
       "type": ["null", "string"],
       "default": null,
-      "doc": "First name (NULL for BUSINESS customers). Required for INDIVIDUAL customers. Used in Customer 360 views."
+      "doc": "First name (for INDIVIDUAL customers)."
     },
     {
       "name": "last_name",
       "type": ["null", "string"],
       "default": null,
-      "doc": "Last name (NULL for BUSINESS customers). Required for INDIVIDUAL customers."
+      "doc": "Last name (for INDIVIDUAL customers)."
     },
     {
-      "name": "company_name",
+      "name": "business_name",
       "type": ["null", "string"],
       "default": null,
-      "doc": "Company name (NULL for INDIVIDUAL customers). Required for BUSINESS customers."
+      "doc": "Business name (for BUSINESS customers)."
     },
     {
       "name": "email",
-      "type": "string",
-      "doc": "Email address (required for all customer types). Used for communication and marketing campaigns."
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Email address (unique)."
     },
     {
       "name": "phone",
       "type": ["null", "string"],
       "default": null,
-      "doc": "Phone number in E.164 format (e.g., +1-555-123-4567). Optional but recommended."
+      "doc": "Phone number."
     },
     {
       "name": "date_of_birth",
-      "type": ["null", "int"],
-      "logicalType": "date",
+      "type": ["null", {"type": "int", "logicalType": "date"}],
       "default": null,
-      "doc": "Date of birth in Avro date format (days since Unix epoch: 1970-01-01). NULL for BUSINESS customers. Used for age-based analytics and compliance (GDPR age verification)."
+      "doc": "Date of birth (for INDIVIDUAL customers). Stored as days since epoch to match SQL DATE."
+    },
+    {
+      "name": "ssn",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Social Security Number (for INDIVIDUAL customers)."
     },
     {
       "name": "tax_id",
       "type": ["null", "string"],
       "default": null,
-      "doc": "Tax identification number: SSN for INDIVIDUAL (format: XXX-XX-XXXX), EIN for BUSINESS (format: XX-XXXXXXX). Sensitive data - encrypt in production."
-    },
-    {
-      "name": "customer_since",
-      "type": "int",
-      "logicalType": "date",
-      "doc": "Date when customer joined the bank (onboarding date). Required field. Used to calculate customer tenure in analytical queries."
-    },
-    {
-      "name": "customer_status",
-      "type": {
-        "type": "enum",
-        "name": "CustomerStatus",
-        "symbols": ["ACTIVE", "INACTIVE", "SUSPENDED", "CLOSED"],
-        "default": "ACTIVE"
-      },
-      "doc": "Current status of the customer account. ACTIVE: Can transact. INACTIVE: Dormant account (no activity >6 months). SUSPENDED: Temporary block (fraud investigation). CLOSED: Permanently closed."
+      "doc": "Tax ID (for BUSINESS customers)."
     },
     {
       "name": "credit_score",
       "type": ["null", "int"],
       "default": null,
-      "doc": "FICO credit score (300-850 range). NULL if not available or not applicable (e.g., new customer, BUSINESS without personal guarantee). Updated quarterly from credit bureau."
+      "doc": "Credit score."
+    },
+    {
+      "name": "customer_since",
+      "type": {"type": "int", "logicalType": "date"},
+      "doc": "Date when customer joined the bank."
+    },
+    {
+      "name": "loyalty_tier",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Loyalty tier: STANDARD, SILVER, GOLD, PLATINUM."
+    },
+    {
+      "name": "preferred_contact_method",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Preferred contact method: EMAIL, PHONE, SMS, MAIL."
+    },
+    {
+      "name": "created_at",
+      "type": ["null", {"type": "long", "logicalType": "timestamp-millis"}],
+      "default": null,
+      "doc": "Creation timestamp."
     },
     {
       "name": "updated_at",
-      "type": "long",
-      "logicalType": "timestamp-millis",
-      "doc": "Last update timestamp in milliseconds since Unix epoch (1970-01-01 00:00:00 UTC). This field is used for CDC (Change Data Capture) to track incremental changes. NiFi QueryDatabaseTable processor uses this to extract only new/modified records since the last run."
+      "type": {"type": "long", "logicalType": "timestamp-millis"},
+      "doc": "Last update timestamp (CDC tracking)."
     }
   ],
   "metadata": {
-    "version": "1.0",
+    "version": "2.0",
     "created_by": "Data Engineering Team",
-    "created_date": "2025-01-01",
+    "created_date": "2025-12-20",
     "source_system": "PostgreSQL banking_source.banking.customer",
     "target_system": "Iceberg bronze.hub_customer + bronze.sat_customer",
     "evolution_policy": "backward_compatible",
-    "notes": "Initial schema version. Future evolution planned: V2 will add loyalty_tier field (optional enum) to demonstrate schema evolution handling in Data Vault 2.0."
+    "notes": "Schema synchronized with SQL as of 2025-12-20."
   }
 }
-

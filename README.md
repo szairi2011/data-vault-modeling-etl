@@ -2,7 +2,179 @@
 
 A comprehensive end-to-end implementation of Data Vault 2.0 methodology for a fictitious banking system, demonstrating modern data warehousing best practices with schema evolution resilience.
 
-## 🎯 Project Goals
+---
+
+## 📊 What You'll Build
+
+```
+PostgreSQL (Source) → NiFi (Extract + Validate) → Avro Files (Staging)
+    ↓
+Spark ETL → Bronze Layer (Raw Vault: Hubs, Links, Satellites)
+    ↓
+Spark ETL → Silver Layer (PIT Tables, Bridge Tables)
+    ↓
+Spark ETL → Gold Layer (Star Schema: Dimensions, Facts)
+    ↓
+BI Tools (Tableau, Power BI, SQL Clients)
+```
+
+### Key Features
+- ✅ Data Vault 2.0 modeling (Hubs, Links, Satellites)
+- ✅ Multi-item transactions (e-commerce pattern)
+- ✅ Schema evolution handling (add columns without breaking queries)
+- ✅ Incremental CDC (extract only changed data via NiFi)
+- ✅ SCD Type 2 (track dimension history)
+- ✅ Full audit trail with Apache Iceberg
+
+---
+
+## 🎯 Prerequisites
+
+Before starting, verify you have:
+
+```powershell
+java -version        # Java 11+ (for Spark)
+scala -version       # Scala 2.12.x
+sbt version          # SBT 1.9+
+psql --version       # PostgreSQL 12+
+```
+
+**NiFi:** Apache NiFi 2.7.2 running at `https://localhost:8443/nifi`  
+**Platform:** Windows (native setup, no Docker required)
+
+---
+
+## 🚀 Quick Start
+
+```powershell
+# 1. Create database and seed data
+psql -U postgres -c "CREATE DATABASE banking_source;"
+psql -U postgres -d banking_source -f source-system\sql\02_create_tables.sql
+sbt "runMain seeder.TransactionalDataSeeder"
+
+# 2. Extract with NiFi (import template from nifi-flows/, start flow in UI)
+
+# 3. Load Data Vault
+sbt "runMain bronze.RawVaultSchema"
+sbt "runMain bronze.RawVaultETL --mode full"
+
+# 4. Build analytics layers
+sbt "runMain silver.BusinessVaultETL --build-pit"
+sbt "runMain gold.DimensionalModelETL --load-dimensions"
+```
+
+**Full walkthrough:** See documentation below.
+
+---
+
+## 📚 Documentation
+
+### For Setup & Execution
+**→ [Complete Setup & Execution Guide](docs/setup_guide.md)**
+- Step-by-step instructions for all pipeline stages
+- NiFi flow configuration (JSON ↔ Avro transformations)
+- Data Vault ETL execution
+- Schema evolution scenarios
+- Troubleshooting
+
+**Start here if:** You want to run the pipeline end-to-end.
+
+---
+
+### For Architecture & Design
+**→ [Architecture & Design Guide](docs/architecture.md)**
+- Data flow architecture diagrams
+- Source system ERM models
+- Data Vault model (Hubs, Links, Satellites)
+- Dimensional model (Star schema)
+- Semantic layer views
+- Design decisions and rationale
+
+**Start here if:** You want to understand the design before executing.
+
+---
+
+## 📁 Project Structure
+
+```
+data-vault-modeling-etl/
+├── docs/
+│   ├── setup_guide.md           ← Execution guide
+│   └── architecture.md          ← Design guide
+├── nifi/
+│   ├── schemas/                 ← Avro schema files (.avsc)
+│   └── scripts/                 ← Validation scripts
+├── nifi-flows/                  ← NiFi templates (import these)
+├── src/main/scala/
+│   ├── bronze/                  ← Raw Vault ETL
+│   ├── silver/                  ← Business Vault ETL
+│   ├── gold/                    ← Dimensional Model ETL
+│   └── seeder/                  ← Data generation
+└── warehouse/
+    ├── staging/                 ← Avro files (NiFi output)
+    ├── bronze/                  ← Iceberg tables (Data Vault)
+    ├── silver/                  ← Iceberg tables (PIT, Bridge)
+    └── gold/                    ← Iceberg tables (Star Schema)
+```
+
+---
+
+## 🎓 Learning Objectives
+
+This project teaches:
+1. **Data Vault 2.0** - Industry standard for enterprise data warehouses
+2. **NiFi Data Ingestion** - Schema validation and CDC patterns
+3. **Avro Schema Management** - Type-safe data exchange
+4. **Spark ETL** - Scalable data processing with Iceberg
+5. **Multi-Layer Architecture** - Bronze → Silver → Gold pattern
+6. **Schema Evolution** - Handle source changes gracefully
+
+---
+
+## 💡 Key Concepts
+
+### Data Vault Pattern
+```
+Hub_Customer (unique customers) + Sat_Customer (attributes with history)
+Link_Customer_Account (relationships) + metadata (load tracking)
+= Resilient to source changes, full audit trail
+```
+
+### Schema Evolution
+```
+Source adds loyalty_tier column → NiFi validates → Spark absorbs
+Old queries: still work | New queries: can use loyalty_tier
+Historical records: loyalty_tier = NULL
+```
+
+### Multi-Item Transactions
+```
+Transaction TXN-001 ($250)
+  ├─ Item 1: Electricity Bill ($100)
+  ├─ Item 2: Water Bill ($50)
+  └─ Item 3: Internet Bill ($100)
+```
+
+---
+
+## 🤝 Use This Project To
+
+- **Learn** data engineering end-to-end
+- **Refresh** your knowledge before interviews
+- **Practice** with executable, real-world scenarios
+- **Reference** when building similar pipelines
+
+---
+
+## 📄 License
+
+MIT License - Free for learning and reference.
+
+---
+
+**Ready to start?** Choose your path:
+- **Execution:** [Setup Guide](docs/setup_guide.md)
+- **Understanding:** [Architecture Guide](docs/architecture.md)
 
 This proof-of-concept demonstrates:
 

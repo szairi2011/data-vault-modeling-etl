@@ -1,82 +1,30 @@
 package bronze.utils
 
 /**
- * ========================================================================
- * AVRO READER UTILITY
- * ========================================================================
+ * AvroReader: Utility for reading Avro files staged by NiFi, validating their schema,
+ * and enriching data for Data Vault ingestion.
  *
  * PURPOSE:
- * Read Avro files from NiFi staging area, validate schema, convert to Spark DataFrame.
+ * This module demonstrates Spark-Avro integration, schema validation, and schema evolution
+ * handling in a real-world ETL context.
  *
- * LEARNING OBJECTIVES:
- * - How Avro self-describing format works
- * - Schema validation strategies
- * - Spark-Avro integration
- * - Error handling for schema evolution
+ * PIPELINE CONTEXT:
+ * 1. NiFi extracts data from PostgreSQL
+ * 2. NiFi converts JSON → Avro (with schema validation)
+ * 3. NiFi stages Avro files in warehouse/staging/{entity}/
+ * 4. AvroReader reads these Avro files for Spark ETL (Bronze layer)
+ * 5. Spark loads data into Data Vault structures (Hubs, Links, Satellites)
  *
- * DATA FLOW:
- * ```
- * NiFi CDC Pipeline
- *     ↓
- * Avro Files (staging/customer/*.avro)
- *     ↓
- * AvroReader.readAvro(...)
- *     ↓
- * Spark DataFrame (validated schema)
- *     ↓
- * Raw Vault Loading
- * ```
+ * SCHEMA VALIDATION:
+ * - NiFi validates on write (JSON → Avro conversion)
+ * - AvroReader validates on read (Avro → Spark DataFrame)
+ * - This double validation ensures data quality end-to-end
  *
- * AVRO FORMAT STRUCTURE:
- * ```
- * ┌─────────────────────────────────────────────────────────────┐
- * │  Avro File (.avro)                                          │
- * ├─────────────────────────────────────────────────────────────┤
- * │  Header:                                                    │
- * │    - Magic bytes: "Obj" + 0x01                             │
- * │    - Schema (JSON embedded in file)                        │
- * │    - Sync marker (16 random bytes for splitting)           │
- * ├─────────────────────────────────────────────────────────────┤
- * │  Data Blocks:                                               │
- * │    ┌────────────────────────────────────────────┐          │
- * │    │  Block 1 (compressed):                     │          │
- * │    │    - Count: 100 records                    │          │
- * │    │    - Size: 8KB (Snappy compressed)        │          │
- * │    │    - Data: Binary serialized records       │          │
- * │    └────────────────────────────────────────────┘          │
- * │    ┌────────────────────────────────────────────┐          │
- * │    │  Block 2 (compressed):                     │          │
- * │    │    - Count: 100 records                    │          │
- * │    │    - Size: 8KB                             │          │
- * │    └────────────────────────────────────────────┘          │
- * │    ...                                                     │
- * │    Sync marker (repeated for each block)                   │
- * └─────────────────────────────────────────────────────────────┘
- * ```
- *
- * WHY AVRO FOR CDC:
- * 1. **Self-Describing**: Schema embedded in file (no external metadata)
- * 2. **Compact**: 30-50% smaller than JSON (binary encoding)
- * 3. **Fast**: No parsing overhead (direct binary read)
- * 4. **Splittable**: Sync markers allow parallel processing
- * 5. **Schema Evolution**: Add/remove fields without breaking readers
- *
- * SCHEMA EVOLUTION RULES:
- * ```
- * ✅ ALLOWED (Backward Compatible):
- *    - Add optional field with default value
- *    - Remove optional field
- *    - Add enum symbol
- *    - Promote type (int → long, float → double)
- *
- * ❌ FORBIDDEN (Breaking Changes):
- *    - Remove required field
- *    - Change field type (string → int)
- *    - Rename field without alias
- *    - Remove enum symbol
- * ```
- *
- * ========================================================================
+ * SCHEMA EVOLUTION:
+ * - Avro files contain embedded schemas
+ * - Spark automatically merges schemas from multiple files
+ * - New fields are detected and warned about
+ * - Missing required fields fail fast to prevent data loss
  */
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
@@ -85,195 +33,107 @@ import org.apache.spark.sql.functions._
 object AvroReader {
 
   /**
-   * ┌─────────────────────────────────────────────────────────────────┐
-   * │ READ AVRO FILES FROM STAGING ZONE                              │
-   * └─────────────────────────────────────────────────────────────────┘
+   * Reads Avro files from the staging directory and optionally validates the schema.
    *
-   * PARAMETERS:
-   * @param stagingPath    Path to Avro files (supports glob: *.avro)
-   * @param validateSchema Whether to validate required fields
-   * @param spark          Implicit SparkSession
-   * @return               Validated DataFrame
+   * @param stagingPath Path to Avro files (can use wildcards, e.g., warehouse/staging/customer/*.avro)
+   * @param validateSchema If true, checks for required fields and warns on new fields (schema evolution)
+   * @return DataFrame enriched with technical columns for lineage tracking
    *
-   * EXAMPLES:
+   * USAGE:
    * ```scala
-   * // Read all customer files
-   * val df = AvroReader.readAvro("warehouse/staging/customer/*.avro")
-   *
-   * // Read specific batch
-   * val df = AvroReader.readAvro("warehouse/staging/customer/customer_20250115_103045.avro")
-   *
-   * // Skip validation (for raw inspection)
-   * val df = AvroReader.readAvro("warehouse/staging/customer/*.avro", validateSchema = false)
+   * val customerDF = AvroReader.readAvro("warehouse/staging/customer/*.avro")
    * ```
-   *
-   * TECHNICAL DETAILS:
-   * - Spark uses org.apache.spark.sql.avro data source
-   * - Schema automatically extracted from Avro file header
-   * - Supports compression (Snappy, Deflate, Bzip2, XZ)
-   * - Parallel reading across partitions
-   *
-   * PERFORMANCE:
-   * - Spark parallelizes reading across partitions
-   * - Each executor reads multiple Avro blocks
-   * - Predicate pushdown works (skip blocks by metadata)
-   *
-   * SCHEMA CACHING:
-   * - Spark caches schema per file
-   * - Reused for subsequent queries
-   * - Invalidated on schema change
    */
   def readAvro(stagingPath: String, validateSchema: Boolean = true)
               (implicit spark: SparkSession): DataFrame = {
 
-    println(
-      s"""
-         |┌─────────────────────────────────────────────────────────────────┐
-         |│ 📖 READING AVRO FILES                                           │
-         |├─────────────────────────────────────────────────────────────────┤
-         |│ Path: $stagingPath
-         |│ Validation: ${if (validateSchema) "Enabled" else "Disabled"}
-         |└─────────────────────────────────────────────────────────────────┘
-         |""".stripMargin)
+    println(s"📖 READING AVRO FILES")
+    println(s"   Path: $stagingPath")
+    println(s"   Validation: ${if (validateSchema) "Enabled" else "Disabled"}")
 
-    // STEP 1: Read Avro files with embedded schema
-    // ─────────────────────────────────────────────
-    // Spark uses org.apache.spark.sql.avro data source
-    // Schema automatically extracted from Avro file header
-    // Supports compression (Snappy, Deflate, Bzip2, XZ)
-    val df = spark.read
-      .format("avro")  // Use Avro data source
-      .load(stagingPath)  // Glob pattern supported
+    // Read Avro files using Spark's built-in Avro data source
+    // Spark automatically reads the embedded Avro schema from the files
+    val df = spark.read.format("avro").load(stagingPath)
 
-    // STEP 2: Validate schema structure (if enabled)
-    // ──────────────────────────────────
-    // Ensure required fields exist
-    // Fail fast if schema incompatible with Raw Vault
+    println(s"✅ Schema validated: ${df.columns.length} fields")
+    println(s"📊 Records read: ${df.count()}")
+
+    // Validate schema structure (fail fast on missing required fields)
     if (validateSchema) {
       validateSchemaStructure(df, stagingPath)
     }
 
-    // STEP 3: Add metadata columns
-    // ────────────────────────────
-    // Enrich with load tracking information
+    // Add technical columns for data lineage and audit trail
     val enrichedDF = df
-      .withColumn("_load_timestamp", current_timestamp())
-      .withColumn("_source_file", input_file_name())
-      .withColumn("_file_modification_time",
-        to_timestamp(lit(System.currentTimeMillis() / 1000)))
-
-    // STEP 4: Show sample and statistics
-    // ───────────────────────────────────
-    val rowCount = enrichedDF.count()
-    println(s"""
-         |✅ Schema validated: ${df.columns.length} fields
-         |📊 Records read: $rowCount
-         |
-         |SAMPLE DATA (first 3 rows):
-         |""".stripMargin)
-
-    enrichedDF.show(3, truncate = false)
-
-    println(s"\nSCHEMA:\n${df.schema.treeString}")
+      .withColumn("_load_timestamp", current_timestamp())  // When was this data loaded into Spark?
+      .withColumn("_source_file", input_file_name())      // Which Avro file did this row come from?
+      .withColumn("_file_modification_time", to_timestamp(lit(System.currentTimeMillis() / 1000)))
 
     enrichedDF
   }
 
   /**
-   * ┌─────────────────────────────────────────────────────────────────┐
-   * │ VALIDATE DATAFRAME SCHEMA                                       │
-   * └─────────────────────────────────────────────────────────────────┘
+   * Validates the DataFrame schema against the expected entity structure.
    *
-   * PURPOSE:
-   * Ensure Avro schema matches expected structure for Raw Vault loading.
+   * WHY VALIDATE AGAIN (NiFi already validates)?
+   * - Defense in depth: Catch issues if files were manually placed in staging
+   * - Schema evolution detection: Alert on new fields for Data Vault satellite updates
+   * - Data quality gate: Fail fast before expensive Spark processing
    *
-   * VALIDATION CHECKS:
-   * 1. Required fields present (business keys, CDC tracking)
-   * 2. Field types compatible with Iceberg tables
-   * 3. Unexpected fields detected (warnings only)
+   * VALIDATION RULES:
+   * - Missing required fields → FAIL (exception thrown)
+   * - New/unexpected fields → WARN (logged, but processing continues)
+   * - Technical fields (starting with _) → IGNORE (added by enrichment)
    *
-   * WHY VALIDATE:
-   * - Prevent silent data loss
-   * - Detect source system changes early
-   * - Ensure Data Vault integrity
-   *
-   * FAIL FAST PHILOSOPHY:
-   * - Better to fail during ingestion than corrupt vault
-   * - Clear error messages for troubleshooting
-   * - Automated alerts to data engineers
+   * @param df DataFrame read from Avro files
+   * @param path File path (used to infer entity type)
    */
   private def validateSchemaStructure(df: DataFrame, path: String): Unit = {
     val actualFields = df.columns.toSet
-
-    // Determine entity type from path
     val entityType = extractEntityType(path)
-
-    // Get required fields based on entity type
     val requiredFields = getRequiredFieldsForEntity(entityType)
 
+    // Check for missing required fields
     val missingFields = requiredFields.diff(actualFields)
-
     if (missingFields.nonEmpty) {
-      // CRITICAL ERROR: Missing required fields
-      // Cannot proceed with loading
-      throw new IllegalArgumentException(
-        s"""
-           |❌ SCHEMA VALIDATION FAILED
-           |
-           |Entity: $entityType
-           |Missing required fields: ${missingFields.mkString(", ")}
-           |
-           |ACTUAL SCHEMA:
-           |${df.schema.treeString}
-           |
-           |EXPECTED FIELDS:
-           |${requiredFields.mkString(", ")}
-           |
-           |POSSIBLE CAUSES:
-           |1. Source system schema changed (column renamed/removed)
-           |2. NiFi flow misconfigured (wrong table extracted)
-           |3. Avro schema not updated in Schema Registry
-           |
-           |RESOLUTION:
-           |1. Check source table schema
-           |2. Verify NiFi flow configuration
-           |3. Re-register Avro schema: .\\nifi\\scripts\\register-schemas.ps1
-           |4. Update RawVaultETL to handle new schema
-           |""".stripMargin
-      )
+      val errorMsg = s"""
+        |❌ SCHEMA VALIDATION FAILED for $entityType
+        |   Missing required fields: ${missingFields.mkString(", ")}
+        |
+        |   This usually means:
+        |   - NiFi flow is misconfigured
+        |   - Avro schema is out of date
+        |   - PostgreSQL schema changed without updating Avro schema
+        |
+        |   Action required: Update nifi/schemas/${entityType}.avsc and re-run NiFi flow
+        |""".stripMargin
+      throw new IllegalArgumentException(errorMsg)
     }
 
-    // WARNING: Unexpected fields (not breaking, but logged)
-    val unexpectedFields = actualFields.diff(requiredFields)
-      .filterNot(_.startsWith("_"))  // Ignore metadata fields we added
-
+    // Detect new fields (schema evolution)
+    val unexpectedFields = actualFields.diff(requiredFields).filterNot(_.startsWith("_"))
     if (unexpectedFields.nonEmpty) {
-      println(
-        s"""
-           |⚠️  NEW FIELDS DETECTED (Schema Evolution):
-           |${unexpectedFields.mkString(", ")}
-           |
-           |IMPACT:
-           |- Fields will be automatically added to Satellite tables
-           |- Existing queries unaffected
-           |- Historical records will have NULL for new fields
-           |
-           |ACTION:
-           |- Review new fields with business analysts
-           |- Update dimensional model if needed (manual decision)
-           |- Document schema change in CHANGELOG.md
-           |""".stripMargin)
+      println(s"")
+      println(s"⚠️  NEW FIELDS DETECTED (Schema Evolution):")
+      println(s"   ${unexpectedFields.mkString(", ")}")
+      println(s"")
+      println(s"   IMPACT:")
+      println(s"   - Fields will be automatically added to Satellite tables")
+      println(s"   - Existing queries unaffected")
+      println(s"   - Historical records will have NULL for new fields")
+      println(s"")
     }
-
-    println(s"✅ Schema validated for $entityType: ${df.columns.length} fields")
   }
 
   /**
-   * Extract entity type from file path
+   * Infers the entity type (customer, account, etc.) from the file path.
    *
-   * Examples:
-   * - warehouse/staging/customer/*.avro → customer
-   * - warehouse/staging/account/account_20250115.avro → account
+   * CONVENTION:
+   * File paths follow the pattern: warehouse/staging/{entity}/*.avro
+   * This allows entity-specific validation rules without explicit configuration.
+   *
+   * @param path File path from staging directory
+   * @return Entity type string (customer, account, transaction_header, transaction_item, unknown)
    */
   private def extractEntityType(path: String): String = {
     if (path.contains("customer")) "customer"
@@ -284,87 +144,90 @@ object AvroReader {
   }
 
   /**
-   * Get required fields based on entity type
+   * Returns the set of required fields for each entity type.
    *
-   * These are fields that MUST exist for Data Vault loading to succeed.
-   * Business keys and CDC tracking fields are always required.
+   * REQUIRED FIELDS:
+   * - Business keys: Essential for Data Vault Hub deduplication
+   * - Foreign keys: Required for Data Vault Link relationships
+   * - CDC tracking: updated_at enables incremental processing
+   * - Core attributes: Minimal fields for Data Vault Satellite integrity
+   *
+   * WHY THESE SPECIFIC FIELDS?
+   * These fields are the absolute minimum needed for:
+   * 1. Identifying unique records (business keys)
+   * 2. Linking related entities (foreign keys)
+   * 3. Tracking changes over time (updated_at)
+   * 4. Basic business functionality (core attributes)
+   *
+   * @param entityType Entity type string
+   * @return Set of required field names
    */
   private def getRequiredFieldsForEntity(entityType: String): Set[String] = {
     entityType match {
-      case "customer" => Set(
-        "customer_id",      // Business key
-        "email",            // Required attribute
-        "customer_type",    // Required attribute
-        "customer_status",  // Required attribute
-        "updated_at"        // CDC tracking
-      )
+      case "customer" =>
+        // customer_id: Hub business key
+        // email/type/status: Core satellite attributes
+        // updated_at: CDC tracking for incremental loads
+        Set("customer_id", "email", "customer_type", "customer_status", "updated_at")
 
-      case "account" => Set(
-        "account_id",       // Business key
-        "customer_id",      // Foreign key for Link
-        "account_number",   // Required attribute
-        "account_type",     // Required attribute
-        "balance",          // Required attribute
-        "updated_at"        // CDC tracking
-      )
+      case "account" =>
+        // account_id: Hub business key
+        // customer_id: Link foreign key to customer
+        // account_number/type/balance: Core attributes
+        // updated_at: CDC tracking
+        Set("account_id", "customer_id", "account_number", "account_type", "balance", "updated_at")
 
-      case "transaction_header" => Set(
-        "transaction_id",   // Business key
-        "account_id",       // Foreign key for Link
-        "transaction_number", // Required attribute
-        "transaction_type", // Required attribute
-        "total_amount",     // Required attribute
-        "updated_at"        // CDC tracking
-      )
+      case "transaction_header" =>
+        // transaction_id: Hub business key
+        // account_id: Link foreign key to account
+        // transaction_number/type/amount: Core attributes
+        // updated_at: CDC tracking
+        Set("transaction_id", "account_id", "transaction_number", "transaction_type", "total_amount", "updated_at")
 
-      case "transaction_item" => Set(
-        "item_id",          // Business key (composite)
-        "transaction_id",   // Foreign key for Link
-        "item_sequence",    // Part of composite key
-        "item_amount",      // Required attribute
-        "updated_at"        // CDC tracking
-      )
+      case "transaction_item" =>
+        // item_id: Hub business key
+        // transaction_id: Link foreign key to transaction_header
+        // item_sequence/amount: Core attributes
+        // updated_at: CDC tracking
+        Set("item_id", "transaction_id", "item_sequence", "item_amount", "updated_at")
 
-      case _ => Set("updated_at")  // Minimum for any entity
+      case _ =>
+        // Unknown entity: only require CDC field
+        // This allows flexibility for new entities
+        Set("updated_at")
     }
   }
 
   /**
-   * ┌─────────────────────────────────────────────────────────────────┐
-   * │ READ AVRO WITH SCHEMA EVOLUTION HANDLING                        │
-   * └─────────────────────────────────────────────────────────────────┘
+   * Reads Avro files and automatically handles schema evolution.
    *
-   * PURPOSE:
-   * Read Avro files with different schema versions and merge into single DataFrame.
-   * Handles case where staging zone has files with V1 and V2 schemas.
+   * SCHEMA EVOLUTION STRATEGY:
+   * - Spark merges schemas from all Avro files
+   * - Missing fields in older files → filled with NULL
+   * - New fields in newer files → added to DataFrame
+   * - Useful for backward and forward compatibility
    *
-   * USAGE:
-   * ```scala
-   * val df = AvroReader.readAvroWithEvolution("warehouse/staging/customer/*.avro")
-   * // Returns unified DataFrame with all fields from all versions
-   * // Missing fields in older versions filled with NULL
-   * ```
+   * USE CASES:
+   * - Reading files from different schema versions
+   * - Gradual schema migration (some files updated, others not)
+   * - Testing schema changes without full data refresh
+   *
+   * @param stagingPath Path to Avro files (wildcards supported)
+   * @return DataFrame with merged schema from all files
    */
   def readAvroWithEvolution(stagingPath: String)
                            (implicit spark: SparkSession): DataFrame = {
+    println(s"📖 READING AVRO WITH SCHEMA EVOLUTION")
+    println(s"   Path: $stagingPath")
 
-    import spark.implicits._
-
-    // Read all files
     val df = spark.read.format("avro").load(stagingPath)
 
-    // Spark automatically handles schema evolution for Avro:
-    // - Union of all schemas across files
-    // - Missing fields filled with NULL
-    // - Compatible with Data Vault satellite pattern
-
-    println(s"""
-         |📖 Read Avro files with schema evolution
-         |   Unified schema: ${df.columns.length} fields
-         |   Records: ${df.count()}
-         |""".stripMargin)
+    println(s"✅ Schema merged: ${df.columns.length} fields")
+    println(s"📊 Records read: ${df.count()} rows")
+    println(s"")
+    println(s"   Fields: ${df.columns.mkString(", ")}")
+    println(s"")
 
     df
   }
 }
-

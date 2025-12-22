@@ -16,7 +16,6 @@ package gold
  * - Date dimension population
  *
  * ETL FLOW:
- * ```
  * Business Vault (Silver) or Raw Vault (Bronze)
  *     ↓
  * Generate Surrogate Keys (sequences)
@@ -26,7 +25,6 @@ package gold
  * Load Facts (with FK lookups to dimensions)
  *     ↓
  * Validate referential integrity
- * ```
  *
  * ========================================================================
  */
@@ -63,7 +61,7 @@ object DimensionalModelETL {
          |  Rebuild Facts: $rebuildFacts
          |""".stripMargin)
 
-    implicit val spark = createSparkSession()
+    implicit val spark: SparkSession = createSparkSession()
 
     try {
       // Create dimensional model tables
@@ -279,9 +277,10 @@ object DimensionalModelETL {
       )
 
     // Overwrite entire dimension (SCD Type 1 pattern)
-    dimProductDF.writeTo("gold.dim_product")
-      .using("iceberg")
-      .overwritePartitions()
+    dimProductDF.write
+      .format("iceberg")
+      .mode("overwrite")
+      .save("gold.dim_product")
 
     val rowCount = dimProductDF.count()
     println(s"   ✅ Loaded $rowCount products to Dim_Product")
@@ -319,9 +318,10 @@ object DimensionalModelETL {
       .withColumn("load_date", current_date())
       .withColumn("last_updated_date", current_date())
 
-    dimBranchDF.writeTo("gold.dim_branch")
-      .using("iceberg")
-      .overwritePartitions()
+    dimBranchDF.write
+      .format("iceberg")
+      .mode("overwrite")
+      .save("gold.dim_branch")
 
     val rowCount = dimBranchDF.count()
     println(s"   ✅ Loaded $rowCount branches to Dim_Branch")
@@ -635,4 +635,3 @@ object DimensionalModelETL {
     println(s"   ✅ Loaded $rowCount snapshots to Fact_Account_Balance")
   }
 }
-

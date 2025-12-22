@@ -16,7 +16,7 @@ package gold.utils
  * - Effective/expiration date management
  *
  * SCD TYPE 2 ALGORITHM:
- * ```
+ *
  * 1. Read current dimension (is_current = TRUE)
  * 2. Compare with incoming source data
  * 3. Identify:
@@ -28,7 +28,6 @@ package gold.utils
  *    - Insert new version (new surrogate key, is_current = TRUE)
  * 5. For new records:
  *    - Insert with new surrogate key (is_current = TRUE)
- * ```
  *
  * ========================================================================
  */
@@ -168,7 +167,7 @@ object SCDType2Handler {
     // Join source with current dimension
     val comparisonDF = sourceDF
       .join(
-        currentDimDF.select(col(naturalKey), col(surrogateKey), compareColumns.map(col): _*),
+        currentDimDF.select((Seq(col(naturalKey), col(surrogateKey)) ++ compareColumns.map(col)): _*),
         Seq(naturalKey),
         "left"
       )
@@ -377,4 +376,3 @@ object SCDType2Handler {
     true
   }
 }
-

@@ -16,7 +16,6 @@ package silver
  * - Performance optimization techniques
  *
  * ETL FLOW:
- * ```
  * Raw Vault (Bronze)
  *     ↓
  * Read Hub + Satellites with temporal logic
@@ -34,9 +33,6 @@ package silver
  * Apply business rules (primary account, etc.)
  *     ↓
  * Write to Bridge tables (Silver)
- * ```
- *
- * ========================================================================
  */
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
@@ -77,7 +73,7 @@ object BusinessVaultETL {
          |""".stripMargin)
 
     // Initialize Spark Session
-    implicit val spark = createSparkSession()
+    implicit val spark: SparkSession = createSparkSession()
 
     try {
       // Create Business Vault tables if not exist
@@ -158,7 +154,6 @@ object BusinessVaultETL {
    * 5. Write to PIT_Customer
    *
    * WINDOW FUNCTION LOGIC:
-   * ```sql
    * SELECT *,
    *   ROW_NUMBER() OVER (
    *     PARTITION BY customer_hash_key
@@ -530,9 +525,10 @@ object BusinessVaultETL {
       // Overwrite entire bridge (full refresh pattern)
       println("   Using full refresh strategy (overwrite)")
 
-      finalBridgeDF.writeTo("silver.bridge_customer_account")
-        .using("iceberg")
-        .overwritePartitions()
+      finalBridgeDF.write
+        .format("iceberg")
+        .mode("overwrite")
+        .save("silver.bridge_customer_account")
 
       println(s"✅ Created Bridge_Customer_Account with $rowCount relationships")
 
@@ -567,7 +563,7 @@ object BusinessVaultETL {
          |└────────────────────────────────────────────────────────────────┘
          |""".stripMargin)
 
-    val startDate = LocalDate.now().minusDays(daysBack)
+    val startDate = LocalDate.now().minusDays(daysBack.toLong)
     val endDate = LocalDate.now()
 
     var currentDate = startDate
@@ -597,4 +593,3 @@ object BusinessVaultETL {
          |""".stripMargin)
   }
 }
-
