@@ -31,18 +31,18 @@ import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.functions._
 
 object AvroReader {
-
   /**
-   * Reads Avro files from the staging directory and optionally validates the schema.
+   * Reads Avro files from the specified staging path into a DataFrame.
    *
-   * @param stagingPath Path to Avro files (can use wildcards, e.g., warehouse/staging/customer/*.avro)
+   * FEATURES:
+   * - Automatic schema extraction from Avro files
+   * - Optional schema validation against expected structure
+   * - Enrichment with technical columns for lineage and auditing
+   *
+   * @param stagingPath    Path to the Avro files (can use wildcards, e.g. warehouse/staging/customer/\*.avro)
    * @param validateSchema If true, checks for required fields and warns on new fields (schema evolution)
+   * @param spark          Implicit SparkSession
    * @return DataFrame enriched with technical columns for lineage tracking
-   *
-   * USAGE:
-   * ```scala
-   * val customerDF = AvroReader.readAvro("warehouse/staging/customer/*.avro")
-   * ```
    */
   def readAvro(stagingPath: String, validateSchema: Boolean = true)
               (implicit spark: SparkSession): DataFrame = {
@@ -51,23 +51,25 @@ object AvroReader {
     println(s"   Path: $stagingPath")
     println(s"   Validation: ${if (validateSchema) "Enabled" else "Disabled"}")
 
-    // Read Avro files using Spark's built-in Avro data source
+    // Read Avro files using Spark's built-in Avro data source reader
     // Spark automatically reads the embedded Avro schema from the files
     val df = spark.read.format("avro").load(stagingPath)
 
     println(s"✅ Schema validated: ${df.columns.length} fields")
     println(s"📊 Records read: ${df.count()}")
 
-    // Validate schema structure (fail fast on missing required fields)
+    /* Validate schema structure:
+         1. Fail fast on missing required fields)
+         2. Warn on new/unexpected fields (schema evolution*/
     if (validateSchema) {
       validateSchemaStructure(df, stagingPath)
     }
 
     // Add technical columns for data lineage and audit trail
     val enrichedDF = df
-      .withColumn("_load_timestamp", current_timestamp())  // When was this data loaded into Spark?
-      .withColumn("_source_file", input_file_name())      // Which Avro file did this row come from?
-      .withColumn("_file_modification_time", to_timestamp(lit(System.currentTimeMillis() / 1000)))
+      .withColumn("_load_timestamp", current_timestamp()) // When was this data loaded into Spark?
+      .withColumn("_source_file", input_file_name()) // Which Avro file did this row come from?
+      .withColumn("_file_modification_time", to_timestamp(lit(System.currentTimeMillis() / 1000))) //
 
     enrichedDF
   }
@@ -85,28 +87,29 @@ object AvroReader {
    * - New/unexpected fields → WARN (logged, but processing continues)
    * - Technical fields (starting with _) → IGNORE (added by enrichment)
    *
-   * @param df DataFrame read from Avro files
+   * @param df   DataFrame read from Avro files
    * @param path File path (used to infer entity type)
    */
   private def validateSchemaStructure(df: DataFrame, path: String): Unit = {
     val actualFields = df.columns.toSet
-    val entityType = extractEntityType(path)
+    val entityType = extractEntityType(path) // e.g. customer, account, transaction_header, transaction_item
     val requiredFields = getRequiredFieldsForEntity(entityType)
 
     // Check for missing required fields
     val missingFields = requiredFields.diff(actualFields)
     if (missingFields.nonEmpty) {
-      val errorMsg = s"""
-        |❌ SCHEMA VALIDATION FAILED for $entityType
-        |   Missing required fields: ${missingFields.mkString(", ")}
-        |
-        |   This usually means:
-        |   - NiFi flow is misconfigured
-        |   - Avro schema is out of date
-        |   - PostgreSQL schema changed without updating Avro schema
-        |
-        |   Action required: Update nifi/schemas/${entityType}.avsc and re-run NiFi flow
-        |""".stripMargin
+      val errorMsg =
+        s"""
+           |❌ SCHEMA VALIDATION FAILED for $entityType
+           |   Missing required fields: ${missingFields.mkString(", ")}
+           |
+           |   This usually means:
+           |   - NiFi flow is misconfigured
+           |   - Avro schema is out of date
+           |   - PostgreSQL schema changed without updating Avro schema
+           |
+           |   Action required: Update nifi/schemas/${entityType}.avsc and re-run NiFi flow
+           |""".stripMargin
       throw new IllegalArgumentException(errorMsg)
     }
 
@@ -129,7 +132,7 @@ object AvroReader {
    * Infers the entity type (customer, account, etc.) from the file path.
    *
    * CONVENTION:
-   * File paths follow the pattern: warehouse/staging/{entity}/*.avro
+   * File paths follow the pattern: warehouse/staging/{entity}/\*.avro
    * This allows entity-specific validation rules without explicit configuration.
    *
    * @param path File path from staging directory

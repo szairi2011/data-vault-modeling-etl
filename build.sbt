@@ -63,33 +63,52 @@ libraryDependencies ++= Seq(
   // APACHE SPARK (Core + SQL + Avro)
   // ──────────────────────────────────────────────────────────────────────
   // Core Spark functionality (RDDs, DataFrames, SparkSession)
-  "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
+  "org.apache.spark" %% "spark-core" % sparkVersion excludeAll(
+    ExclusionRule("com.fasterxml.jackson.core"),
+    ExclusionRule("com.fasterxml.jackson.module")
+  ),
 
   // Spark SQL for structured data processing
-  "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
+  "org.apache.spark" %% "spark-sql" % sparkVersion excludeAll(
+    ExclusionRule("com.fasterxml.jackson.core"),
+    ExclusionRule("com.fasterxml.jackson.module")
+  ),
 
   // Spark Avro support for reading/writing Avro files
-  "org.apache.spark" %% "spark-avro" % sparkVersion,
+  "org.apache.spark" %% "spark-avro" % sparkVersion excludeAll(
+    ExclusionRule("com.fasterxml.jackson.core"),
+    ExclusionRule("com.fasterxml.jackson.module")
+  ),
 
   // Spark Hive support (enables HiveContext and HMS integration)
-  "org.apache.spark" %% "spark-hive" % sparkVersion % "provided",
+  "org.apache.spark" %% "spark-hive" % sparkVersion excludeAll(
+    ExclusionRule("com.fasterxml.jackson.core"),
+    ExclusionRule("com.fasterxml.jackson.module")
+  ),
 
-  // WHY "provided"?
-  // - Spark jars available in cluster runtime
-  // - Reduces fat JAR size
-  // - For local development, SBT will still resolve them
+  // NOTE: Removed "provided" scope for local development
+  // Add it back when deploying to production cluster with spark-submit
 
   // ──────────────────────────────────────────────────────────────────────
   // APACHE ICEBERG (Table Format)
   // ──────────────────────────────────────────────────────────────────────
   // Iceberg Spark runtime for reading/writing Iceberg tables
-  "org.apache.iceberg" %% "iceberg-spark-runtime-3.5" % icebergVersion,
+  "org.apache.iceberg" %% "iceberg-spark-runtime-3.5" % icebergVersion excludeAll(
+    ExclusionRule("com.fasterxml.jackson.core"),
+    ExclusionRule("com.fasterxml.jackson.module")
+  ),
 
   // Iceberg core library (table format implementation)
-  "org.apache.iceberg" % "iceberg-core" % icebergVersion,
+  "org.apache.iceberg" % "iceberg-core" % icebergVersion excludeAll(
+    ExclusionRule("com.fasterxml.jackson.core"),
+    ExclusionRule("com.fasterxml.jackson.module")
+  ),
 
   // Iceberg Hive Metastore catalog integration
-  "org.apache.iceberg" % "iceberg-hive-metastore" % icebergVersion,
+  "org.apache.iceberg" % "iceberg-hive-metastore" % icebergVersion excludeAll(
+    ExclusionRule("com.fasterxml.jackson.core"),
+    ExclusionRule("com.fasterxml.jackson.module")
+  ),
 
   // WHY ICEBERG:
   // - ACID transactions
@@ -105,19 +124,25 @@ libraryDependencies ++= Seq(
   "org.apache.hive" % "hive-metastore" % hiveVersion excludeAll(
     ExclusionRule(organization = "org.apache.logging.log4j"),
     ExclusionRule(organization = "org.slf4j"),
-    ExclusionRule(organization = "javax.servlet")
+    ExclusionRule(organization = "javax.servlet"),
+    ExclusionRule("com.fasterxml.jackson.core"),
+    ExclusionRule("com.fasterxml.jackson.module")
   ),
 
   // Hive standalone metastore (for embedded mode)
   "org.apache.hive" % "hive-standalone-metastore" % hiveVersion excludeAll(
     ExclusionRule(organization = "org.apache.logging.log4j"),
-    ExclusionRule(organization = "org.slf4j")
+    ExclusionRule(organization = "org.slf4j"),
+    ExclusionRule("com.fasterxml.jackson.core"),
+    ExclusionRule("com.fasterxml.jackson.module")
   ),
 
   // Hive common utilities
   "org.apache.hive" % "hive-common" % hiveVersion excludeAll(
     ExclusionRule(organization = "org.apache.logging.log4j"),
-    ExclusionRule(organization = "org.slf4j")
+    ExclusionRule(organization = "org.slf4j"),
+    ExclusionRule("com.fasterxml.jackson.core"),
+    ExclusionRule("com.fasterxml.jackson.module")
   ),
 
   // WHY HMS:
@@ -147,7 +172,7 @@ libraryDependencies ++= Seq(
   "org.apache.avro" % "avro" % avroVersion,
 
   // Avro tools for schema compilation and utilities
-  "org.apache.avro" % "avro-tools" % avroVersion,
+  "org.apache.avro" % "avro-tools" % avroVersion % Test,
 
   // WHY AVRO:
   // - Self-describing format (schema embedded)
@@ -194,6 +219,12 @@ libraryDependencies ++= Seq(
   // ──────────────────────────────────────────────────────────────────────
   // UTILITIES
   // ──────────────────────────────────────────────────────────────────────
+  // JACKSON - Forcer la version compatible avec Spark 3.5 et Scala module 2.15.x
+  "com.fasterxml.jackson.core" % "jackson-databind" % "2.15.2",
+  "com.fasterxml.jackson.core" % "jackson-core" % "2.15.2",
+  "com.fasterxml.jackson.core" % "jackson-annotations" % "2.15.2",
+  "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.15.2",
+
   // Typesafe Config for application configuration
   "com.typesafe" % "config" % "1.4.3",
 
@@ -202,6 +233,24 @@ libraryDependencies ++= Seq(
 
   // Commons Lang3 for utility functions
   "org.apache.commons" % "commons-lang3" % "3.13.0"
+)
+
+// Forcer la résolution de Jackson 2.15.2 partout
+dependencyOverrides ++= Seq(
+  "com.fasterxml.jackson.core" % "jackson-databind" % "2.15.2",
+  "com.fasterxml.jackson.core" % "jackson-core" % "2.15.2",
+  "com.fasterxml.jackson.core" % "jackson-annotations" % "2.15.2",
+  "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.15.2"
+)
+
+// Exclure les versions conflictuelles de Jackson dans Avro, Hadoop, Hive, etc.
+dependencyOverrides ++= Seq(
+  "org.apache.avro" % "avro" % avroVersion exclude("com.fasterxml.jackson.core", "*"),
+  "org.apache.hadoop" % "hadoop-common" % hadoopVersion exclude("com.fasterxml.jackson.core", "*"),
+  "org.apache.hadoop" % "hadoop-client" % hadoopVersion exclude("com.fasterxml.jackson.core", "*"),
+  "org.apache.hive" % "hive-common" % hiveVersion exclude("com.fasterxml.jackson.core", "*"),
+  "org.apache.hive" % "hive-metastore" % hiveVersion exclude("com.fasterxml.jackson.core", "*"),
+  "org.apache.hive" % "hive-standalone-metastore" % hiveVersion exclude("com.fasterxml.jackson.core", "*")
 )
 
 // ============================================================================
@@ -233,7 +282,6 @@ javaOptions ++= Seq(
   "-Xmx4G",
   "-XX:+UseG1GC",
   "-XX:MaxGCPauseMillis=200",
-  "-Dderby.system.home=metastore_db",
   "-Dspark.master=local[*]"
 )
 
@@ -444,4 +492,3 @@ addCommandAlias("seedTxn", "runMain seeder.TransactionalDataSeeder")
  *              --deploy-mode cluster \
  *              target/scala-2.12/data-vault-modeling-etl-1.0.0.jar
  */
-

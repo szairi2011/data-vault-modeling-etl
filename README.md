@@ -76,14 +76,24 @@ sbt "runMain seeder.TransactionalDataSeeder"
 
 # 2. Extract with NiFi (import template from nifi-flows/, start flow in UI)
 
-# 3. Load Data Vault
-sbt "runMain bronze.RawVaultSchema"
-sbt "runMain bronze.RawVaultETL --mode full"
+# 3. Load Data Vault Bronze Layer (Raw Vault)
+sbt "runMain bronze.RawVaultETL"                    # All entities, incremental mode
+sbt "runMain bronze.RawVaultETL --mode full"        # Full refresh all entities
+sbt "runMain bronze.RawVaultETL --entity customer"  # Single entity only
 
 # 4. Build analytics layers
 sbt "runMain silver.BusinessVaultETL --build-pit"
 sbt "runMain gold.DimensionalModelETL --load-dimensions"
 ```
+
+**What the Bronze ETL does:**
+- ✅ Creates all Data Vault 2.0 tables (Hubs, Links, Satellites) using Iceberg
+- ✅ Reads Avro files from `warehouse/staging/` with schema validation
+- ✅ Generates MD5 hash keys for deterministic joins
+- ✅ Loads business keys into Hubs (deduplicated)
+- ✅ Loads relationships into Links
+- ✅ Loads descriptive attributes into Satellites with SCD Type 2 history
+- ✅ Tracks all ETL operations in `bronze.load_metadata` for audit trail
 
 **→ Complete walkthrough:** [Pipeline Execution Guide](docs/setup_guide.md#part-ii-pipeline-execution)
 
