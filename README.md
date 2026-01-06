@@ -39,6 +39,8 @@ BI Tools (Tableau, Power BI, SQL Clients)
   - [Design Details](docs/architecture.md#source-system-erm)
 - ✅ **Schema evolution handling** - Add columns without breaking queries
   - [How It Works](docs/architecture.md#why-data-vault-20)
+- ✅ **Schema-driven validation** - Avro schemas (`nifi/schemas/*.avsc`) define required fields for both NiFi and Spark
+  - [Design Principle](docs/architecture.md#3-single-source-of-truth-for-schema-validation)
 - ✅ **Incremental CDC via NiFi** - Extract only changed data
   - [Implementation Guide](docs/architecture.md#why-apache-nifi)
 - ✅ **SCD Type 2 history tracking** - Full temporal history
@@ -68,20 +70,43 @@ psql --version       # PostgreSQL 12+
 
 ## 🚀 Quick Start
 
-```powershell
+```bash
 # 1. Create database and seed data
 psql -U postgres -c "CREATE DATABASE banking_source;"
-psql -U postgres -d banking_source -f source-system\sql\02_create_tables.sql
+psql -U postgres -d banking_source -f source-system/sql/02_create_tables.sql
 sbt "runMain seeder.TransactionalDataSeeder"
 
 # 2. Extract with NiFi (import template from nifi-flows/, start flow in UI)
 
-# 3. Load Data Vault Bronze Layer (Raw Vault)
-sbt "runMain bronze.RawVaultETL"                    # All entities, incremental mode
-sbt "runMain bronze.RawVaultETL --mode full"        # Full refresh all entities
-sbt "runMain bronze.RawVaultETL --entity customer"  # Single entity only
+# 3. Load Bronze Layer (Raw Vault) - Progressive Validation
+#
+# OPTION A: Run from IntelliJ IDE (fastest for development)
+#   - Open src/main/scala/bronze/RawVaultETL.scala
+#   - Configure Run: --mode full --staging-path warehouse/staging
+#   - Press Shift+F10
+#
+# OPTION B: Run via spark-submit (validate JAR packaging)
+sbt clean assembly
+spark-submit \
+  --class bronze.RawVaultETL \
+  --master local[*] \
+  --conf spark.sql.catalog.spark_catalog=org.apache.iceberg.spark.SparkCatalog \
+  --conf spark.sql.catalog.spark_catalog.type=hadoop \
+  --conf spark.sql.catalog.spark_catalog.warehouse=warehouse/bronze \
+  target/scala-2.12/data-vault-etl-assembly-0.1.0.jar \
+  --mode full \
+  --staging-path warehouse/staging \
+  --output-path warehouse/bronze/raw-vault
 
-# 4. Build analytics layers
+# Validate Bronze layer data quality
+sbt "runMain bronze.BronzeValidator"
+
+# OPTION C: Run from Airflow UI (test orchestration)
+#   1. Install: pip install apache-airflow==2.8.1
+#   2. Start: airflow webserver & airflow scheduler
+#   3. Trigger DAG: data_vault_bronze_load at http://localhost:8080
+
+# 4. Build analytics layers (Silver & Gold)
 sbt "runMain silver.BusinessVaultETL --build-pit"
 sbt "runMain gold.DimensionalModelETL --load-dimensions"
 ```
@@ -89,13 +114,15 @@ sbt "runMain gold.DimensionalModelETL --load-dimensions"
 **What the Bronze ETL does:**
 - ✅ Creates all Data Vault 2.0 tables (Hubs, Links, Satellites) using Iceberg
 - ✅ Reads Avro files from `warehouse/staging/` with schema validation
-- ✅ Generates MD5 hash keys for deterministic joins
+- ✅ Generates hash keys (SHA-256) for deterministic joins
 - ✅ Loads business keys into Hubs (deduplicated)
 - ✅ Loads relationships into Links
-- ✅ Loads descriptive attributes into Satellites with SCD Type 2 history
-- ✅ Tracks all ETL operations in `bronze.load_metadata` for audit trail
+- ✅ Loads descriptive attributes into Satellites with full history
+- ✅ Validates data quality (no duplicates, proper temporal fields)
 
 **→ Complete walkthrough:** [Pipeline Execution Guide](docs/setup_guide.md#part-ii-pipeline-execution)
+
+**→ Detailed Bronze Layer guide:** [Stage 3: Bronze Layer (3 Sub-Tasks)](docs/setup_guide.md#stage-3-bronze-layer-raw-vault)
 
 **→ If issues arise:** [Troubleshooting](docs/setup_guide.md#troubleshooting)
 

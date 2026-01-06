@@ -1,0 +1,102 @@
+{
+  "format-version" : 2,
+  "table-uuid" : "7b797e92-f6e3-4e85-a09e-c57059a8db44",
+  "location" : "warehouse/bronze/link_transaction_item",
+  "last-sequence-number" : 1,
+  "last-updated-ms" : 1767697227513,
+  "last-column-id" : 5,
+  "current-schema-id" : 0,
+  "schemas" : [ {
+    "type" : "struct",
+    "schema-id" : 0,
+    "fields" : [ {
+      "id" : 1,
+      "name" : "link_transaction_item_hash_key",
+      "required" : false,
+      "type" : "string",
+      "doc" : "MD5 hash of transaction_hash_key + transaction_item_hash_key"
+    }, {
+      "id" : 2,
+      "name" : "transaction_hash_key",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Foreign key to Hub_Transaction"
+    }, {
+      "id" : 3,
+      "name" : "transaction_item_hash_key",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Foreign key to Hub_Transaction_Item"
+    }, {
+      "id" : 4,
+      "name" : "load_date",
+      "required" : false,
+      "type" : "date",
+      "doc" : "Date when relationship was established"
+    }, {
+      "id" : 5,
+      "name" : "record_source",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Source system identifier"
+    } ]
+  } ],
+  "default-spec-id" : 0,
+  "partition-specs" : [ {
+    "spec-id" : 0,
+    "fields" : [ {
+      "name" : "load_date",
+      "transform" : "identity",
+      "source-id" : 4,
+      "field-id" : 1000
+    } ]
+  } ],
+  "last-partition-id" : 1000,
+  "default-sort-order-id" : 0,
+  "sort-orders" : [ {
+    "order-id" : 0,
+    "fields" : [ ]
+  } ],
+  "properties" : {
+    "owner" : "sofiane",
+    "comment" : "Data Vault Link: Transaction-Item relationship (multi-item pattern)",
+    "write.parquet.compression-codec" : "snappy"
+  },
+  "current-snapshot-id" : 5549792374419172254,
+  "refs" : {
+    "main" : {
+      "snapshot-id" : 5549792374419172254,
+      "type" : "branch"
+    }
+  },
+  "snapshots" : [ {
+    "sequence-number" : 1,
+    "snapshot-id" : 5549792374419172254,
+    "timestamp-ms" : 1767697227513,
+    "summary" : {
+      "operation" : "append",
+      "spark.app.id" : "local-1767697214473",
+      "added-data-files" : "1",
+      "added-records" : "7977",
+      "added-files-size" : "698606",
+      "changed-partition-count" : "1",
+      "total-records" : "7977",
+      "total-files-size" : "698606",
+      "total-data-files" : "1",
+      "total-delete-files" : "0",
+      "total-position-deletes" : "0",
+      "total-equality-deletes" : "0"
+    },
+    "manifest-list" : "warehouse/bronze/link_transaction_item/metadata/snap-5549792374419172254-1-e3e7bfb9-c696-4f11-bbfc-a5761a5ad5ed.avro",
+    "schema-id" : 0
+  } ],
+  "statistics" : [ ],
+  "snapshot-log" : [ {
+    "timestamp-ms" : 1767697227513,
+    "snapshot-id" : 5549792374419172254
+  } ],
+  "metadata-log" : [ {
+    "timestamp-ms" : 1767695895666,
+    "metadata-file" : "warehouse/bronze/link_transaction_item/metadata/v1.metadata.json"
+  } ]
+}

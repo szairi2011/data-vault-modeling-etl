@@ -1,0 +1,155 @@
+{
+  "format-version" : 2,
+  "table-uuid" : "2371e98d-552b-4fc6-bb41-1df9c2a4763f",
+  "location" : "warehouse/bronze/sat_customer",
+  "last-sequence-number" : 0,
+  "last-updated-ms" : 1767695895706,
+  "last-column-id" : 19,
+  "current-schema-id" : 0,
+  "schemas" : [ {
+    "type" : "struct",
+    "schema-id" : 0,
+    "fields" : [ {
+      "id" : 1,
+      "name" : "customer_hash_key",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Foreign key to Hub_Customer"
+    }, {
+      "id" : 2,
+      "name" : "customer_type",
+      "required" : false,
+      "type" : "string",
+      "doc" : "INDIVIDUAL or BUSINESS"
+    }, {
+      "id" : 3,
+      "name" : "first_name",
+      "required" : false,
+      "type" : "string",
+      "doc" : "First name (for individuals)"
+    }, {
+      "id" : 4,
+      "name" : "last_name",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Last name (for individuals)"
+    }, {
+      "id" : 5,
+      "name" : "business_name",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Business name (for business customers)"
+    }, {
+      "id" : 6,
+      "name" : "email",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Email address"
+    }, {
+      "id" : 7,
+      "name" : "phone",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Phone number"
+    }, {
+      "id" : 8,
+      "name" : "date_of_birth",
+      "required" : false,
+      "type" : "date",
+      "doc" : "Date of birth (for individuals)"
+    }, {
+      "id" : 9,
+      "name" : "ssn",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Social Security Number (for individuals)"
+    }, {
+      "id" : 10,
+      "name" : "tax_id",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Tax identification number (for business customers)"
+    }, {
+      "id" : 11,
+      "name" : "credit_score",
+      "required" : false,
+      "type" : "int",
+      "doc" : "Credit score (if available)"
+    }, {
+      "id" : 12,
+      "name" : "customer_since",
+      "required" : false,
+      "type" : "date",
+      "doc" : "Date customer relationship started"
+    }, {
+      "id" : 13,
+      "name" : "loyalty_tier",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Loyalty tier from source (STANDARD, SILVER, GOLD, PLATINUM)"
+    }, {
+      "id" : 14,
+      "name" : "preferred_contact_method",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Preferred contact method from source (EMAIL, PHONE, SMS, MAIL)"
+    }, {
+      "id" : 15,
+      "name" : "customer_diff_hash",
+      "required" : false,
+      "type" : "string",
+      "doc" : "MD5 hash of descriptive columns for change detection"
+    }, {
+      "id" : 16,
+      "name" : "valid_from",
+      "required" : false,
+      "type" : "timestamptz",
+      "doc" : "Start of validity period for this version"
+    }, {
+      "id" : 17,
+      "name" : "valid_to",
+      "required" : false,
+      "type" : "timestamptz",
+      "doc" : "End of validity period (NULL for current version)"
+    }, {
+      "id" : 18,
+      "name" : "load_date",
+      "required" : false,
+      "type" : "date",
+      "doc" : "Date when record was loaded into vault"
+    }, {
+      "id" : 19,
+      "name" : "record_source",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Source system identifier"
+    } ]
+  } ],
+  "default-spec-id" : 0,
+  "partition-specs" : [ {
+    "spec-id" : 0,
+    "fields" : [ {
+      "name" : "load_date",
+      "transform" : "identity",
+      "source-id" : 18,
+      "field-id" : 1000
+    } ]
+  } ],
+  "last-partition-id" : 1000,
+  "default-sort-order-id" : 0,
+  "sort-orders" : [ {
+    "order-id" : 0,
+    "fields" : [ ]
+  } ],
+  "properties" : {
+    "owner" : "sofiane",
+    "comment" : "Data Vault Satellite: Customer descriptive attributes (raw) with full history (SCD Type 2)",
+    "write.parquet.compression-codec" : "snappy"
+  },
+  "current-snapshot-id" : -1,
+  "refs" : { },
+  "snapshots" : [ ],
+  "statistics" : [ ],
+  "snapshot-log" : [ ],
+  "metadata-log" : [ ]
+}

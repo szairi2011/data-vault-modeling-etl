@@ -47,8 +47,28 @@ object RawVaultSchema {
          |""".stripMargin)
 
     // Create database if not exists
-    spark.sql("CREATE DATABASE IF NOT EXISTS bronze")
-    println("✅ Database 'bronze' ready")
+    println("🔧 Creating database 'bronze'...")
+    try {
+      // For HadoopCatalog, we need to specify a location
+      // For HiveCatalog, location is optional
+      spark.sql("""
+        CREATE DATABASE IF NOT EXISTS bronze
+        COMMENT 'Data Vault 2.0 Raw Vault - Bronze Layer'
+      """)
+
+      // Verify database was created by listing databases
+      val databases = spark.sql("SHOW DATABASES").collect().map(_.getString(0))
+      if (databases.contains("bronze")) {
+        println("✅ Database 'bronze' ready")
+      } else {
+        println("⚠️  WARNING: Database 'bronze' not found after creation!")
+        println(s"   Available databases: ${databases.mkString(", ")}")
+      }
+    } catch {
+      case e: Exception =>
+        println(s"❌ Failed to create database 'bronze': ${e.getMessage}")
+        throw e
+    }
 
     // Create Hubs (Business entities - business keys only)
     createHubCustomer()
@@ -70,6 +90,15 @@ object RawVaultSchema {
     createLoadMetadata()
 
     println("\n✅ All Raw Vault tables created successfully")
+
+    // Verify tables were created
+    println("\n🔍 Verifying created tables...")
+    val tables = spark.sql("SHOW TABLES IN bronze").collect()
+    tables.foreach(row => println(s"   - ${row.getString(1)}"))
+
+    if (tables.isEmpty) {
+      println("⚠️  WARNING: No tables found in bronze database!")
+    }
   }
 
   /**
@@ -254,15 +283,17 @@ object RawVaultSchema {
         customer_type STRING COMMENT 'INDIVIDUAL or BUSINESS',
         first_name STRING COMMENT 'First name (for individuals)',
         last_name STRING COMMENT 'Last name (for individuals)',
-        company_name STRING COMMENT 'Company name (for business)',
+        business_name STRING COMMENT 'Business name (for business customers)',
         email STRING COMMENT 'Email address',
         phone STRING COMMENT 'Phone number',
         date_of_birth DATE COMMENT 'Date of birth (for individuals)',
-        tax_id STRING COMMENT 'Tax identification number',
-        customer_since DATE COMMENT 'Date customer relationship started',
-        customer_status STRING COMMENT 'ACTIVE, INACTIVE, SUSPENDED',
+        ssn STRING COMMENT 'Social Security Number (for individuals)',
+        tax_id STRING COMMENT 'Tax identification number (for business customers)',
         credit_score INT COMMENT 'Credit score (if available)',
-        customer_diff_hash STRING COMMENT 'MD5 hash of all descriptive columns for change detection',
+        customer_since DATE COMMENT 'Date customer relationship started',
+        loyalty_tier STRING COMMENT 'Loyalty tier from source (STANDARD, SILVER, GOLD, PLATINUM)',
+        preferred_contact_method STRING COMMENT 'Preferred contact method from source (EMAIL, PHONE, SMS, MAIL)',
+        customer_diff_hash STRING COMMENT 'MD5 hash of descriptive columns for change detection',
         valid_from TIMESTAMP COMMENT 'Start of validity period for this version',
         valid_to TIMESTAMP COMMENT 'End of validity period (NULL for current version)',
         load_date DATE COMMENT 'Date when record was loaded into vault',
@@ -273,7 +304,7 @@ object RawVaultSchema {
       TBLPROPERTIES (
         'format-version' = '2',
         'write.parquet.compression-codec' = 'snappy',
-        'comment' = 'Data Vault Satellite: Customer descriptive attributes with full history (SCD Type 2)'
+        'comment' = 'Data Vault Satellite: Customer descriptive attributes (raw) with full history (SCD Type 2)'
       )
     """)
     println("  🛰️  Created Sat_Customer")
@@ -285,21 +316,24 @@ object RawVaultSchema {
    * └─────────────────────────────────────────────────────────────────┘
    */
   def createSatAccount()(implicit spark: SparkSession): Unit = {
+    // Account satellite aligned with account.avsc (raw attributes only)
     spark.sql("""
       CREATE TABLE IF NOT EXISTS bronze.sat_account (
         account_hash_key STRING COMMENT 'Foreign key to Hub_Account',
-        account_number STRING COMMENT 'Account number (display)',
-        account_type STRING COMMENT 'CHECKING, SAVINGS, CREDIT, LOAN',
+        account_number STRING COMMENT 'Customer-facing account number',
         product_id INT COMMENT 'Product identifier',
         branch_id INT COMMENT 'Branch where account was opened',
-        balance DECIMAL(15,2) COMMENT 'Current balance',
-        available_balance DECIMAL(15,2) COMMENT 'Available balance (balance - holds)',
-        currency_code STRING COMMENT 'Currency code (USD, EUR, etc.)',
-        interest_rate DECIMAL(5,4) COMMENT 'Annual interest rate',
-        credit_limit DECIMAL(15,2) COMMENT 'Credit limit (for credit accounts)',
+        account_status STRING COMMENT 'ACTIVE, CLOSED, FROZEN, SUSPENDED',
+        current_balance DECIMAL(15,2) COMMENT 'Current account balance',
+        available_balance DECIMAL(15,2) COMMENT 'Available balance',
+        currency STRING COMMENT 'ISO 4217 currency code',
+        overdraft_limit DECIMAL(15,2) COMMENT 'Overdraft protection limit',
+        interest_rate DECIMAL(5,2) COMMENT 'Annual interest rate',
         opened_date DATE COMMENT 'Date account was opened',
-        account_status STRING COMMENT 'ACTIVE, CLOSED, FROZEN',
-        account_diff_hash STRING COMMENT 'MD5 hash of all descriptive columns',
+        closed_date DATE COMMENT 'Date account was closed (NULL for active)',
+        last_transaction_date TIMESTAMP COMMENT 'Timestamp of most recent transaction',
+        updated_at TIMESTAMP COMMENT 'CDC last modification timestamp',
+        account_diff_hash STRING COMMENT 'MD5 hash of descriptive columns for change detection',
         valid_from TIMESTAMP COMMENT 'Start of validity period',
         valid_to TIMESTAMP COMMENT 'End of validity period (NULL for current)',
         load_date DATE COMMENT 'Date when record was loaded',
@@ -310,7 +344,7 @@ object RawVaultSchema {
       TBLPROPERTIES (
         'format-version' = '2',
         'write.parquet.compression-codec' = 'snappy',
-        'comment' = 'Data Vault Satellite: Account descriptive attributes with history'
+        'comment' = 'Data Vault Satellite: Account raw descriptive attributes with history'
       )
     """)
     println("  🛰️  Created Sat_Account")
@@ -322,19 +356,24 @@ object RawVaultSchema {
    * └─────────────────────────────────────────────────────────────────┘
    */
   def createSatTransaction()(implicit spark: SparkSession): Unit = {
+    // Transaction header satellite aligned with transaction_header.avsc (raw attributes only)
     spark.sql("""
       CREATE TABLE IF NOT EXISTS bronze.sat_transaction (
         transaction_hash_key STRING COMMENT 'Foreign key to Hub_Transaction',
-        transaction_number STRING COMMENT 'Transaction number (display)',
-        transaction_type STRING COMMENT 'DEPOSIT, WITHDRAWAL, TRANSFER, PAYMENT',
-        transaction_date DATE COMMENT 'Date of transaction',
-        transaction_time TIMESTAMP COMMENT 'Timestamp of transaction',
+        transaction_number STRING COMMENT 'User-facing transaction reference',
+        transaction_type STRING COMMENT 'High-level transaction category',
+        transaction_date TIMESTAMP COMMENT 'When transaction occurred',
+        posting_date TIMESTAMP COMMENT 'When transaction was posted',
         total_amount DECIMAL(15,2) COMMENT 'Total transaction amount',
-        currency_code STRING COMMENT 'Currency code',
-        description STRING COMMENT 'Transaction description',
-        channel STRING COMMENT 'BRANCH, ATM, ONLINE, MOBILE',
-        status STRING COMMENT 'PENDING, COMPLETED, FAILED, REVERSED',
-        transaction_diff_hash STRING COMMENT 'MD5 hash of all descriptive columns',
+        description STRING COMMENT 'Transaction description from source',
+        channel STRING COMMENT 'Channel (ATM, BRANCH, ONLINE, MOBILE, PHONE)',
+        transaction_status STRING COMMENT 'PENDING, COMPLETED, FAILED, REVERSED',
+        location STRING COMMENT 'Where transaction occurred',
+        reference_number STRING COMMENT 'External reference number',
+        initiated_by STRING COMMENT 'User or system that initiated transaction',
+        created_at TIMESTAMP COMMENT 'Creation timestamp in source',
+        updated_at TIMESTAMP COMMENT 'CDC last modification timestamp',
+        transaction_diff_hash STRING COMMENT 'MD5 hash of descriptive columns',
         valid_from TIMESTAMP COMMENT 'Start of validity period',
         valid_to TIMESTAMP COMMENT 'End of validity period (NULL for current)',
         load_date DATE COMMENT 'Date when record was loaded',
@@ -345,7 +384,7 @@ object RawVaultSchema {
       TBLPROPERTIES (
         'format-version' = '2',
         'write.parquet.compression-codec' = 'snappy',
-        'comment' = 'Data Vault Satellite: Transaction header attributes with history'
+        'comment' = 'Data Vault Satellite: Transaction header raw attributes with history'
       )
     """)
     println("  🛰️  Created Sat_Transaction")
@@ -362,15 +401,20 @@ object RawVaultSchema {
    * - Supports complex transaction scenarios (e.g., split payments)
    */
   def createSatTransactionItem()(implicit spark: SparkSession): Unit = {
+    // Transaction item satellite aligned with transaction_item.avsc (raw attributes only)
     spark.sql("""
       CREATE TABLE IF NOT EXISTS bronze.sat_transaction_item (
         transaction_item_hash_key STRING COMMENT 'Foreign key to Hub_Transaction_Item',
-        item_type STRING COMMENT 'DEBIT, CREDIT, FEE, TAX',
-        item_description STRING COMMENT 'Item description',
-        item_amount DECIMAL(15,2) COMMENT 'Item amount',
-        item_category STRING COMMENT 'Category code',
-        merchant_id INT COMMENT 'Merchant identifier (if applicable)',
-        item_diff_hash STRING COMMENT 'MD5 hash of all descriptive columns',
+        item_amount DECIMAL(15,2) COMMENT 'Line item amount',
+        category_id INT COMMENT 'Category reference identifier',
+        merchant_name STRING COMMENT 'Merchant or payee name',
+        merchant_category_code STRING COMMENT 'Merchant Category Code (MCC)',
+        item_description STRING COMMENT 'Detailed item description',
+        created_at TIMESTAMP COMMENT 'Item creation timestamp in source',
+        payee_name STRING COMMENT 'Payment recipient name',
+        payee_account STRING COMMENT 'Payee account number',
+        is_recurring BOOLEAN COMMENT 'Is this a recurring payment item',
+        item_diff_hash STRING COMMENT 'MD5 hash of descriptive columns',
         valid_from TIMESTAMP COMMENT 'Start of validity period',
         valid_to TIMESTAMP COMMENT 'End of validity period (NULL for current)',
         load_date DATE COMMENT 'Date when record was loaded',
@@ -381,7 +425,7 @@ object RawVaultSchema {
       TBLPROPERTIES (
         'format-version' = '2',
         'write.parquet.compression-codec' = 'snappy',
-        'comment' = 'Data Vault Satellite: Transaction item line details (multi-item pattern)'
+        'comment' = 'Data Vault Satellite: Transaction item raw attributes (multi-item pattern) with history'
       )
     """)
     println("  🛰️  Created Sat_Transaction_Item")

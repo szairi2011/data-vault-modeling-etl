@@ -1,0 +1,71 @@
+{
+  "format-version" : 2,
+  "table-uuid" : "7b797e92-f6e3-4e85-a09e-c57059a8db44",
+  "location" : "warehouse/bronze/link_transaction_item",
+  "last-sequence-number" : 0,
+  "last-updated-ms" : 1767695895666,
+  "last-column-id" : 5,
+  "current-schema-id" : 0,
+  "schemas" : [ {
+    "type" : "struct",
+    "schema-id" : 0,
+    "fields" : [ {
+      "id" : 1,
+      "name" : "link_transaction_item_hash_key",
+      "required" : false,
+      "type" : "string",
+      "doc" : "MD5 hash of transaction_hash_key + transaction_item_hash_key"
+    }, {
+      "id" : 2,
+      "name" : "transaction_hash_key",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Foreign key to Hub_Transaction"
+    }, {
+      "id" : 3,
+      "name" : "transaction_item_hash_key",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Foreign key to Hub_Transaction_Item"
+    }, {
+      "id" : 4,
+      "name" : "load_date",
+      "required" : false,
+      "type" : "date",
+      "doc" : "Date when relationship was established"
+    }, {
+      "id" : 5,
+      "name" : "record_source",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Source system identifier"
+    } ]
+  } ],
+  "default-spec-id" : 0,
+  "partition-specs" : [ {
+    "spec-id" : 0,
+    "fields" : [ {
+      "name" : "load_date",
+      "transform" : "identity",
+      "source-id" : 4,
+      "field-id" : 1000
+    } ]
+  } ],
+  "last-partition-id" : 1000,
+  "default-sort-order-id" : 0,
+  "sort-orders" : [ {
+    "order-id" : 0,
+    "fields" : [ ]
+  } ],
+  "properties" : {
+    "owner" : "sofiane",
+    "comment" : "Data Vault Link: Transaction-Item relationship (multi-item pattern)",
+    "write.parquet.compression-codec" : "snappy"
+  },
+  "current-snapshot-id" : -1,
+  "refs" : { },
+  "snapshots" : [ ],
+  "statistics" : [ ],
+  "snapshot-log" : [ ],
+  "metadata-log" : [ ]
+}

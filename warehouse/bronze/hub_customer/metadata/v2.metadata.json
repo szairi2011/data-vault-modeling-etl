@@ -1,0 +1,96 @@
+{
+  "format-version" : 2,
+  "table-uuid" : "6421d352-0d5c-4a35-9d3a-4c39365dcfc1",
+  "location" : "warehouse/bronze/hub_customer",
+  "last-sequence-number" : 1,
+  "last-updated-ms" : 1767695899815,
+  "last-column-id" : 4,
+  "current-schema-id" : 0,
+  "schemas" : [ {
+    "type" : "struct",
+    "schema-id" : 0,
+    "fields" : [ {
+      "id" : 1,
+      "name" : "customer_hash_key",
+      "required" : false,
+      "type" : "string",
+      "doc" : "MD5 hash of customer_id"
+    }, {
+      "id" : 2,
+      "name" : "customer_id",
+      "required" : false,
+      "type" : "int",
+      "doc" : "Business key from source system"
+    }, {
+      "id" : 3,
+      "name" : "load_date",
+      "required" : false,
+      "type" : "date",
+      "doc" : "Date when record was loaded into vault"
+    }, {
+      "id" : 4,
+      "name" : "record_source",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Source system identifier"
+    } ]
+  } ],
+  "default-spec-id" : 0,
+  "partition-specs" : [ {
+    "spec-id" : 0,
+    "fields" : [ {
+      "name" : "load_date",
+      "transform" : "identity",
+      "source-id" : 3,
+      "field-id" : 1000
+    } ]
+  } ],
+  "last-partition-id" : 1000,
+  "default-sort-order-id" : 0,
+  "sort-orders" : [ {
+    "order-id" : 0,
+    "fields" : [ ]
+  } ],
+  "properties" : {
+    "owner" : "sofiane",
+    "comment" : "Data Vault Hub: Customer business keys only",
+    "write.parquet.compression-codec" : "snappy"
+  },
+  "current-snapshot-id" : 8064467207395859202,
+  "refs" : {
+    "main" : {
+      "snapshot-id" : 8064467207395859202,
+      "type" : "branch"
+    }
+  },
+  "snapshots" : [ {
+    "sequence-number" : 1,
+    "snapshot-id" : 8064467207395859202,
+    "timestamp-ms" : 1767695899815,
+    "summary" : {
+      "operation" : "append",
+      "spark.app.id" : "local-1767695892572",
+      "added-data-files" : "1",
+      "added-records" : "1000",
+      "added-files-size" : "38221",
+      "changed-partition-count" : "1",
+      "total-records" : "1000",
+      "total-files-size" : "38221",
+      "total-data-files" : "1",
+      "total-delete-files" : "0",
+      "total-position-deletes" : "0",
+      "total-equality-deletes" : "0"
+    },
+    "manifest-list" : "warehouse/bronze/hub_customer/metadata/snap-8064467207395859202-1-9f7cd28f-a9f1-4b2b-8050-cfbd28e64352.avro",
+    "schema-id" : 0
+  } ],
+  "statistics" : [ ],
+  "snapshot-log" : [ {
+    "timestamp-ms" : 1767695899815,
+    "snapshot-id" : 8064467207395859202
+  } ],
+  "metadata-log" : [ {
+    "timestamp-ms" : 1767695895337,
+    "metadata-file" : "warehouse/bronze/hub_customer/metadata/v1.metadata.json"
+  } ]
+}

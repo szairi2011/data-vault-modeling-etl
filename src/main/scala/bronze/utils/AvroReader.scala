@@ -29,8 +29,120 @@ package bronze.utils
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.functions._
+import org.apache.avro.Schema
+import scala.collection.JavaConverters._
+import java.io.File
 
 object AvroReader {
+
+  // Schema cache to avoid repeated file I/O operations
+  // Schemas are immutable, so caching is safe
+  private val schemaCache = scala.collection.mutable.Map[String, Schema]()
+
+  /**
+   * Loads and parses the Avro schema file for the specified entity type.
+   *
+   * SCHEMA LOCATION:
+   * All Avro schema files are stored in: nifi/schemas/{entity}.avsc
+   *
+   * CACHING STRATEGY:
+   * Schemas are parsed once and cached in memory to avoid repeated file I/O.
+   * This is safe because schemas are immutable configuration files.
+   *
+   * ERROR HANDLING:
+   * - Missing schema file → Clear exception with full path
+   * - Invalid JSON → Avro parser will throw with details
+   *
+   * @param entityType Entity type (customer, account, transaction_header, transaction_item)
+   * @return Parsed Avro Schema object
+   * @throws java.io.FileNotFoundException if schema file doesn't exist
+   * @throws org.apache.avro.SchemaParseException if schema JSON is invalid
+   */
+  private def loadAvroSchema(entityType: String): Schema = {
+    schemaCache.getOrElseUpdate(entityType, {
+      val schemaPath = s"nifi/schemas/${entityType}.avsc"
+      val schemaFile = new File(schemaPath)
+
+      if (!schemaFile.exists()) {
+        throw new java.io.FileNotFoundException(
+          s"""
+             |❌ AVRO SCHEMA FILE NOT FOUND: $schemaPath
+             |
+             |   Expected location: ${schemaFile.getAbsolutePath}
+             |
+             |   Available schemas:
+             |   - nifi/schemas/customer.avsc
+             |   - nifi/schemas/account.avsc
+             |   - nifi/schemas/transaction_header.avsc
+             |   - nifi/schemas/transaction_item.avsc
+             |
+             |   Action required: Verify entity type or create missing schema file
+             |""".stripMargin
+        )
+      }
+
+      // Read schema file and parse JSON into Avro Schema object
+      val source = scala.io.Source.fromFile(schemaFile)
+      try {
+        val schemaJson = source.mkString
+        new Schema.Parser().parse(schemaJson)
+      } finally {
+        source.close()
+      }
+    })
+  }
+
+  /**
+   * Extracts required fields from Avro schema by analyzing field definitions.
+   *
+   * REQUIRED FIELD DETECTION RULES:
+   * A field is considered REQUIRED if:
+   * 1. It is NOT nullable (type is not a union containing "null"), AND
+   * 2. It has NO default value defined
+   *
+   * AVRO SCHEMA EXAMPLES:
+   * - Required: {"name": "customer_id", "type": "int"}
+   * - Optional (nullable): {"name": "email", "type": ["null", "string"], "default": null}
+   * - Optional (default): {"name": "currency", "type": "string", "default": "USD"}
+   *
+   * This makes the Avro schema the SINGLE SOURCE OF TRUTH for validation rules.
+   * No need to hardcode field lists in Scala code!
+   *
+   * @param schema Parsed Avro schema
+   * @return Set of required field names
+   */
+  private def extractRequiredFields(schema: Schema): Set[String] = {
+    schema.getFields.asScala
+      .filter { field =>
+        // Required if NOT nullable AND no default value
+        !isNullableField(field) && !field.hasDefaultValue
+      }
+      .map(_.name())
+      .toSet
+  }
+
+  /**
+   * Checks if an Avro field is nullable by examining its type definition.
+   *
+   * NULLABLE DETECTION:
+   * In Avro, nullable fields are represented as UNION types containing "null":
+   * - Nullable: ["null", "string"]
+   * - Nullable: ["string", "null"] (order doesn't matter)
+   * - Not nullable: "string"
+   * - Not nullable: ["string", "int"] (union without null)
+   *
+   * @param field Avro schema field
+   * @return true if field type is a union containing null type
+   */
+  private def isNullableField(field: Schema.Field): Boolean = {
+    field.schema().getType match {
+      case Schema.Type.UNION =>
+        // Check if any type in the union is NULL
+        field.schema().getTypes.asScala.exists(_.getType == Schema.Type.NULL)
+      case _ => false
+    }
+  }
+
   /**
    * Reads Avro files from the specified staging path into a DataFrame.
    *
@@ -77,6 +189,13 @@ object AvroReader {
   /**
    * Validates the DataFrame schema against the expected entity structure.
    *
+   * VALIDATION APPROACH (Schema-Driven):
+   * This method now dynamically extracts required fields from the Avro schema files
+   * instead of hardcoding them in Scala code. This ensures:
+   * - Single source of truth (Avro schemas define all rules)
+   * - No code changes needed when adding optional fields
+   * - Impossible for Scala code and schemas to drift
+   *
    * WHY VALIDATE AGAIN (NiFi already validates)?
    * - Defense in depth: Catch issues if files were manually placed in staging
    * - Schema evolution detection: Alert on new fields for Data Vault satellite updates
@@ -93,7 +212,14 @@ object AvroReader {
   private def validateSchemaStructure(df: DataFrame, path: String): Unit = {
     val actualFields = df.columns.toSet
     val entityType = extractEntityType(path) // e.g. customer, account, transaction_header, transaction_item
-    val requiredFields = getRequiredFieldsForEntity(entityType)
+
+    // Load Avro schema and extract required fields dynamically
+    val avroSchema = loadAvroSchema(entityType)
+    val requiredFields = extractRequiredFields(avroSchema)
+
+    println(s"🔍 VALIDATING SCHEMA FOR: $entityType")
+    println(s"   Required fields (from ${entityType}.avsc): ${requiredFields.size}")
+    println(s"   Actual fields (from Avro data): ${actualFields.size}")
 
     // Check for missing required fields
     val missingFields = requiredFields.diff(actualFields)
@@ -114,7 +240,9 @@ object AvroReader {
     }
 
     // Detect new fields (schema evolution)
-    val unexpectedFields = actualFields.diff(requiredFields).filterNot(_.startsWith("_"))
+    // We compare against ALL fields in schema (not just required ones)
+    val allSchemaFields = avroSchema.getFields.asScala.map(_.name()).toSet
+    val unexpectedFields = actualFields.diff(allSchemaFields).filterNot(_.startsWith("_"))
     if (unexpectedFields.nonEmpty) {
       println(s"")
       println(s"⚠️  NEW FIELDS DETECTED (Schema Evolution):")
@@ -125,6 +253,10 @@ object AvroReader {
       println(s"   - Existing queries unaffected")
       println(s"   - Historical records will have NULL for new fields")
       println(s"")
+      println(s"   RECOMMENDATION: Update nifi/schemas/${entityType}.avsc to document these fields")
+      println(s"")
+    } else {
+      println(s"✅ Schema validation passed - all required fields present")
     }
   }
 
@@ -146,60 +278,6 @@ object AvroReader {
     else "unknown"
   }
 
-  /**
-   * Returns the set of required fields for each entity type.
-   *
-   * REQUIRED FIELDS:
-   * - Business keys: Essential for Data Vault Hub deduplication
-   * - Foreign keys: Required for Data Vault Link relationships
-   * - CDC tracking: updated_at enables incremental processing
-   * - Core attributes: Minimal fields for Data Vault Satellite integrity
-   *
-   * WHY THESE SPECIFIC FIELDS?
-   * These fields are the absolute minimum needed for:
-   * 1. Identifying unique records (business keys)
-   * 2. Linking related entities (foreign keys)
-   * 3. Tracking changes over time (updated_at)
-   * 4. Basic business functionality (core attributes)
-   *
-   * @param entityType Entity type string
-   * @return Set of required field names
-   */
-  private def getRequiredFieldsForEntity(entityType: String): Set[String] = {
-    entityType match {
-      case "customer" =>
-        // customer_id: Hub business key
-        // email/type/status: Core satellite attributes
-        // updated_at: CDC tracking for incremental loads
-        Set("customer_id", "email", "customer_type", "customer_status", "updated_at")
-
-      case "account" =>
-        // account_id: Hub business key
-        // customer_id: Link foreign key to customer
-        // account_number/type/balance: Core attributes
-        // updated_at: CDC tracking
-        Set("account_id", "customer_id", "account_number", "account_type", "balance", "updated_at")
-
-      case "transaction_header" =>
-        // transaction_id: Hub business key
-        // account_id: Link foreign key to account
-        // transaction_number/type/amount: Core attributes
-        // updated_at: CDC tracking
-        Set("transaction_id", "account_id", "transaction_number", "transaction_type", "total_amount", "updated_at")
-
-      case "transaction_item" =>
-        // item_id: Hub business key
-        // transaction_id: Link foreign key to transaction_header
-        // item_sequence/amount: Core attributes
-        // updated_at: CDC tracking
-        Set("item_id", "transaction_id", "item_sequence", "item_amount", "updated_at")
-
-      case _ =>
-        // Unknown entity: only require CDC field
-        // This allows flexibility for new entities
-        Set("updated_at")
-    }
-  }
 
   /**
    * Reads Avro files and automatically handles schema evolution.

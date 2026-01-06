@@ -24,21 +24,19 @@
       "type": {
         "type": "enum",
         "name": "TransactionType",
-        "symbols": ["DEPOSIT", "WITHDRAWAL", "PAYMENT", "TRANSFER", "FEE", "INTEREST"],
-        "default": "DEPOSIT"
+        "symbols": ["DEPOSIT", "WITHDRAWAL", "TRANSFER", "PAYMENT", "FEE", "INTEREST", "ADJUSTMENT"]
       },
-      "doc": "High-level transaction category. DEPOSIT: Incoming funds. WITHDRAWAL: ATM/teller cash out. PAYMENT: Bill payment, merchant purchase. TRANSFER: Between accounts. FEE: Service charge. INTEREST: Interest credit/debit."
+      "doc": "High-level transaction category per DDL."
     },
     {
       "name": "transaction_date",
-      "type": "int",
-      "logicalType": "date",
+      "type": {"type": "long", "logicalType": "timestamp-millis"},
       "doc": "Date when transaction occurred (transaction date, not posting date). Used for daily aggregations and time-series analysis."
     },
     {
       "name": "posting_date",
-      "type": "int",
-      "logicalType": "date",
+      "type": ["null", {"type": "long", "logicalType": "timestamp-millis"}],
+      "default": null,
       "doc": "Date when transaction was posted to account balance. Can differ from transaction_date due to processing delays (e.g., weekend transactions post on Monday)."
     },
     {
@@ -59,36 +57,46 @@
     },
     {
       "name": "channel",
-      "type": {
-        "type": "enum",
-        "name": "TransactionChannel",
-        "symbols": ["ATM", "BRANCH", "ONLINE", "MOBILE", "PHONE", "AUTO"],
-        "default": "ONLINE"
-      },
-      "doc": "Channel through which transaction was initiated. Used for channel analytics and fraud detection (e.g., unusual ATM locations)."
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Channel (ATM, BRANCH, ONLINE, MOBILE, PHONE). Matches DDL VARCHAR(20)."
     },
     {
-      "name": "status",
+      "name": "transaction_status",
       "type": {
         "type": "enum",
         "name": "TransactionStatus",
-        "symbols": ["PENDING", "POSTED", "DECLINED", "REVERSED"],
-        "default": "POSTED"
+        "symbols": ["PENDING", "COMPLETED", "FAILED", "REVERSED"]
       },
-      "doc": "Transaction lifecycle status. PENDING: Authorized but not settled. POSTED: Completed and reflected in balance. DECLINED: Authorization failed. REVERSED: Posted then reversed (e.g., refund, error correction)."
+      "doc": "Transaction lifecycle status per DDL (NOT NULL)."
+    },
+    {
+      "name": "location",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Where transaction occurred (nullable per DDL)."
+    },
+    {
+      "name": "reference_number",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "External reference number (nullable per DDL)."
+    },
+    {
+      "name": "initiated_by",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "User or system that initiated transaction (nullable per DDL)."
     },
     {
       "name": "created_at",
-      "type": "long",
-      "logicalType": "timestamp-millis",
+      "type": {"type": "long", "logicalType": "timestamp-millis"},
       "doc": "Timestamp when transaction record was created in source system. Used for transaction ordering and reconciliation."
     },
     {
       "name": "updated_at",
-      "type": "long",
-      "logicalType": "timestamp-millis",
+      "type": {"type": "long", "logicalType": "timestamp-millis"},
       "doc": "CDC tracking field. Last modification timestamp."
     }
   ]
 }
-

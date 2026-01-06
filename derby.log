@@ -1,12 +1,12 @@
 ----------------------------------------------------------------
-Mon Dec 22 18:28:43 GMT+01:00 2025:
-Booting Derby version The Apache Software Foundation - Apache Derby - 10.14.2.0 - (1828579): instance a816c00e-019b-471b-315e-00001c919200 
-on database directory C:\dev\projects\data-vault-modeling-etl\warehouse\metastore_db with class loader jdk.internal.loader.ClassLoaders$AppClassLoader@1698c449 
-Loaded from file:/C:/dev/projects/data-vault-modeling-etl/target/bg-jobs/sbt_74063130/target/80ad82eb/0b708d5e/derby-10.14.2.0.jar
+Tue Jan 06 09:52:12 CET 2026:
+Booting Derby version The Apache Software Foundation - Apache Derby - 10.14.2.0 - (1828579): instance a816c00e-019b-9281-b24b-0000265c7150 
+on database directory C:\Users\sofiane\work\learn-intellij\data-vault-modeling-etl\warehouse\metastore_db with class loader jdk.internal.loader.ClassLoaders$AppClassLoader@16f65612 
+Loaded from file:/C:/Users/sofiane/AppData/Local/Coursier/cache/v1/https/repo1.maven.org/maven2/org/apache/derby/derby/10.14.2.0/derby-10.14.2.0.jar
 java.vendor=Oracle Corporation
 java.runtime.version=11.0.28+12-LTS-279
-user.dir=C:\dev\projects\data-vault-modeling-etl
-os.name=Windows 10
+user.dir=C:\Users\sofiane\work\learn-intellij\data-vault-modeling-etl
+os.name=Windows 11
 os.arch=amd64
 os.version=10.0
 derby.system.home=null

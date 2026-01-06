@@ -1,0 +1,155 @@
+{
+  "format-version" : 2,
+  "table-uuid" : "c8599863-438c-4ba9-8482-dd4de1a54e3a",
+  "location" : "warehouse/bronze/sat_account",
+  "last-sequence-number" : 0,
+  "last-updated-ms" : 1767695895744,
+  "last-column-id" : 19,
+  "current-schema-id" : 0,
+  "schemas" : [ {
+    "type" : "struct",
+    "schema-id" : 0,
+    "fields" : [ {
+      "id" : 1,
+      "name" : "account_hash_key",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Foreign key to Hub_Account"
+    }, {
+      "id" : 2,
+      "name" : "account_number",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Customer-facing account number"
+    }, {
+      "id" : 3,
+      "name" : "product_id",
+      "required" : false,
+      "type" : "int",
+      "doc" : "Product identifier"
+    }, {
+      "id" : 4,
+      "name" : "branch_id",
+      "required" : false,
+      "type" : "int",
+      "doc" : "Branch where account was opened"
+    }, {
+      "id" : 5,
+      "name" : "account_status",
+      "required" : false,
+      "type" : "string",
+      "doc" : "ACTIVE, CLOSED, FROZEN, SUSPENDED"
+    }, {
+      "id" : 6,
+      "name" : "current_balance",
+      "required" : false,
+      "type" : "decimal(15, 2)",
+      "doc" : "Current account balance"
+    }, {
+      "id" : 7,
+      "name" : "available_balance",
+      "required" : false,
+      "type" : "decimal(15, 2)",
+      "doc" : "Available balance"
+    }, {
+      "id" : 8,
+      "name" : "currency",
+      "required" : false,
+      "type" : "string",
+      "doc" : "ISO 4217 currency code"
+    }, {
+      "id" : 9,
+      "name" : "overdraft_limit",
+      "required" : false,
+      "type" : "decimal(15, 2)",
+      "doc" : "Overdraft protection limit"
+    }, {
+      "id" : 10,
+      "name" : "interest_rate",
+      "required" : false,
+      "type" : "decimal(5, 2)",
+      "doc" : "Annual interest rate"
+    }, {
+      "id" : 11,
+      "name" : "opened_date",
+      "required" : false,
+      "type" : "date",
+      "doc" : "Date account was opened"
+    }, {
+      "id" : 12,
+      "name" : "closed_date",
+      "required" : false,
+      "type" : "date",
+      "doc" : "Date account was closed (NULL for active)"
+    }, {
+      "id" : 13,
+      "name" : "last_transaction_date",
+      "required" : false,
+      "type" : "timestamptz",
+      "doc" : "Timestamp of most recent transaction"
+    }, {
+      "id" : 14,
+      "name" : "updated_at",
+      "required" : false,
+      "type" : "timestamptz",
+      "doc" : "CDC last modification timestamp"
+    }, {
+      "id" : 15,
+      "name" : "account_diff_hash",
+      "required" : false,
+      "type" : "string",
+      "doc" : "MD5 hash of descriptive columns for change detection"
+    }, {
+      "id" : 16,
+      "name" : "valid_from",
+      "required" : false,
+      "type" : "timestamptz",
+      "doc" : "Start of validity period"
+    }, {
+      "id" : 17,
+      "name" : "valid_to",
+      "required" : false,
+      "type" : "timestamptz",
+      "doc" : "End of validity period (NULL for current)"
+    }, {
+      "id" : 18,
+      "name" : "load_date",
+      "required" : false,
+      "type" : "date",
+      "doc" : "Date when record was loaded"
+    }, {
+      "id" : 19,
+      "name" : "record_source",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Source system identifier"
+    } ]
+  } ],
+  "default-spec-id" : 0,
+  "partition-specs" : [ {
+    "spec-id" : 0,
+    "fields" : [ {
+      "name" : "load_date",
+      "transform" : "identity",
+      "source-id" : 18,
+      "field-id" : 1000
+    } ]
+  } ],
+  "last-partition-id" : 1000,
+  "default-sort-order-id" : 0,
+  "sort-orders" : [ {
+    "order-id" : 0,
+    "fields" : [ ]
+  } ],
+  "properties" : {
+    "owner" : "sofiane",
+    "comment" : "Data Vault Satellite: Account raw descriptive attributes with history",
+    "write.parquet.compression-codec" : "snappy"
+  },
+  "current-snapshot-id" : -1,
+  "refs" : { },
+  "snapshots" : [ ],
+  "statistics" : [ ],
+  "snapshot-log" : [ ],
+  "metadata-log" : [ ]
+}

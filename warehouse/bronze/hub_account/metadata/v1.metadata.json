@@ -1,0 +1,65 @@
+{
+  "format-version" : 2,
+  "table-uuid" : "416908a7-4cb7-48a1-be58-ad8f76f14dff",
+  "location" : "warehouse/bronze/hub_account",
+  "last-sequence-number" : 0,
+  "last-updated-ms" : 1767695895543,
+  "last-column-id" : 4,
+  "current-schema-id" : 0,
+  "schemas" : [ {
+    "type" : "struct",
+    "schema-id" : 0,
+    "fields" : [ {
+      "id" : 1,
+      "name" : "account_hash_key",
+      "required" : false,
+      "type" : "string",
+      "doc" : "MD5 hash of account_id"
+    }, {
+      "id" : 2,
+      "name" : "account_id",
+      "required" : false,
+      "type" : "int",
+      "doc" : "Business key from source system"
+    }, {
+      "id" : 3,
+      "name" : "load_date",
+      "required" : false,
+      "type" : "date",
+      "doc" : "Date when record was loaded into vault"
+    }, {
+      "id" : 4,
+      "name" : "record_source",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Source system identifier"
+    } ]
+  } ],
+  "default-spec-id" : 0,
+  "partition-specs" : [ {
+    "spec-id" : 0,
+    "fields" : [ {
+      "name" : "load_date",
+      "transform" : "identity",
+      "source-id" : 3,
+      "field-id" : 1000
+    } ]
+  } ],
+  "last-partition-id" : 1000,
+  "default-sort-order-id" : 0,
+  "sort-orders" : [ {
+    "order-id" : 0,
+    "fields" : [ ]
+  } ],
+  "properties" : {
+    "owner" : "sofiane",
+    "comment" : "Data Vault Hub: Account business keys only",
+    "write.parquet.compression-codec" : "snappy"
+  },
+  "current-snapshot-id" : -1,
+  "refs" : { },
+  "snapshots" : [ ],
+  "statistics" : [ ],
+  "snapshot-log" : [ ],
+  "metadata-log" : [ ]
+}

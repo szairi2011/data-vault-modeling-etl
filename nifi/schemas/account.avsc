@@ -20,16 +20,6 @@
       "doc": "Customer-facing account number (format: XXXX-XXXX-XXXX-XXXX). Used for account identification in statements and UI."
     },
     {
-      "name": "account_type",
-      "type": {
-        "type": "enum",
-        "name": "AccountType",
-        "symbols": ["CHECKING", "SAVINGS", "CREDIT_CARD", "LOAN"],
-        "default": "CHECKING"
-      },
-      "doc": "Type of account. Determines applicable business rules (e.g., overdraft for checking, interest calculation for savings)."
-    },
-    {
       "name": "product_id",
       "type": "int",
       "doc": "Foreign key to product reference table. Links to specific product offering (e.g., 'Premier Checking', 'High Yield Savings')."
@@ -40,14 +30,24 @@
       "doc": "Foreign key to branch reference table. Home branch where account was opened."
     },
     {
-      "name": "balance",
+      "name": "account_status",
+      "type": {
+        "type": "enum",
+        "name": "AccountStatus",
+        "symbols": ["ACTIVE", "CLOSED", "FROZEN", "SUSPENDED"],
+        "default": "ACTIVE"
+      },
+      "doc": "Current status. ACTIVE: Normal operations. CLOSED: Permanently closed. FROZEN: Temporary block (fraud, legal hold). SUSPENDED: Account access restricted."
+    },
+    {
+      "name": "current_balance",
       "type": {
         "type": "bytes",
         "logicalType": "decimal",
         "precision": 15,
         "scale": 2
       },
-      "doc": "Current account balance in USD. Decimal(15,2) for precision (supports up to $999,999,999,999.99). Positive for assets (checking/savings), negative for liabilities (loans)."
+      "doc": "Current account balance in USD. Decimal(15,2) for precision (supports up to $999,999,999,999.99). Positive for assets (checking/savings), negative for liabilities (loans). Default 0.00."
     },
     {
       "name": "available_balance",
@@ -57,13 +57,23 @@
         "precision": 15,
         "scale": 2
       },
-      "doc": "Available balance (balance minus pending transactions and holds). Used for overdraft protection and authorization decisions."
+      "doc": "Available balance (balance minus pending transactions and holds). Used for overdraft protection and authorization decisions. Default 0.00."
     },
     {
-      "name": "currency_code",
+      "name": "currency",
       "type": "string",
       "default": "USD",
       "doc": "ISO 4217 currency code (3 letters). Default USD. Supports multi-currency accounts in future."
+    },
+    {
+      "name": "overdraft_limit",
+      "type": {
+        "type": "bytes",
+        "logicalType": "decimal",
+        "precision": 15,
+        "scale": 2
+      },
+      "doc": "Overdraft protection limit for the account. Default 0.00. Used to calculate available credit for overdraft-enabled accounts."
     },
     {
       "name": "interest_rate",
@@ -71,44 +81,32 @@
         "type": "bytes",
         "logicalType": "decimal",
         "precision": 5,
-        "scale": 4
-      }],
-      "default": null,
-      "doc": "Annual interest rate as decimal (e.g., 0.0325 = 3.25%). NULL for non-interest-bearing accounts. Used for interest calculation in business vault."
-    },
-    {
-      "name": "credit_limit",
-      "type": ["null", {
-        "type": "bytes",
-        "logicalType": "decimal",
-        "precision": 15,
         "scale": 2
       }],
       "default": null,
-      "doc": "Credit limit for CREDIT_CARD and LOAN accounts. NULL for CHECKING/SAVINGS. Used to calculate available credit."
+      "doc": "Annual interest rate as decimal (e.g., 3.25 = 3.25%). NULL for non-interest-bearing accounts. Used for interest calculation in business vault."
     },
     {
       "name": "opened_date",
-      "type": "int",
-      "logicalType": "date",
-      "doc": "Date when account was opened. Used to calculate account age in analytics."
+      "type": { "type": "int", "logicalType": "date" },
+      "doc": "Date when account was opened (NOT NULL in source). Used to calculate account age in analytics."
     },
     {
-      "name": "account_status",
-      "type": {
-        "type": "enum",
-        "name": "AccountStatus",
-        "symbols": ["ACTIVE", "INACTIVE", "FROZEN", "CLOSED"],
-        "default": "ACTIVE"
-      },
-      "doc": "Current status. ACTIVE: Normal operations. INACTIVE: No transactions >12 months. FROZEN: Temporary block (fraud, legal hold). CLOSED: Permanently closed."
+      "name": "closed_date",
+      "type": ["null", { "type": "int", "logicalType": "date" }],
+      "default": null,
+      "doc": "Date when account was closed. NULL for active accounts."
+    },
+    {
+      "name": "last_transaction_date",
+      "type": ["null", { "type": "long", "logicalType": "timestamp-millis" }],
+      "default": null,
+      "doc": "Timestamp of the most recent transaction on this account. NULL if no transactions yet."
     },
     {
       "name": "updated_at",
-      "type": "long",
-      "logicalType": "timestamp-millis",
+      "type": { "type": "long", "logicalType": "timestamp-millis" },
       "doc": "CDC tracking field. Timestamp of last modification in milliseconds since epoch."
     }
   ]
 }
-

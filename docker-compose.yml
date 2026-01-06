@@ -1,0 +1,100 @@
+version: "3.8"
+
+# ============================================================================
+# LOCAL AIRFLOW DEVELOPMENT ENVIRONMENT
+# ============================================================================
+#
+# PURPOSE:
+# Run Airflow locally for Bronze Layer ETL development and testing.
+#
+# ARCHITECTURE:
+# - Airflow webserver & scheduler in single container (LocalExecutor)
+# - SQLite backend (simple for dev)
+# - Mounted volumes for DAGs, logs, warehouse, and JARs
+# - No separate Spark container (uses spark-submit from Airflow)
+#
+# USAGE:
+# docker-compose up -d
+# Access UI: http://localhost:8080 (admin/admin)
+# docker-compose down
+#
+# ============================================================================
+
+services:
+  airflow:
+    image: apache/airflow:2.8.1-python3.11
+    container_name: airflow-dev
+    environment:
+      # Core Airflow settings
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__EXECUTOR: "LocalExecutor"
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "sqlite:////opt/airflow/airflow.db"
+      AIRFLOW__WEBSERVER__SECRET_KEY: "local-dev-secret-key-change-in-prod"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+
+      # Spark configuration (for spark-submit commands in DAGs)
+      SPARK_HOME: /opt/spark
+      JAVA_HOME: /usr/lib/jvm/java-11-openjdk-amd64
+
+      # Iceberg catalog configuration
+      SPARK_CONF_DIR: /opt/spark/conf
+
+    volumes:
+      # Airflow DAGs and logs
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+
+      # Data warehouse (staging and bronze layers)
+      - ./warehouse:/opt/warehouse
+
+      # Compiled JARs
+      - ./jars:/opt/jars
+
+      # Spark installation (you'll need to add Spark to your project)
+      # Download from: https://spark.apache.org/downloads.html
+      # Extract to ./spark/ directory
+      - ./spark:/opt/spark
+
+    ports:
+      - "8080:8080"  # Airflow Web UI
+
+    command: >
+      bash -c "
+        # Initialize Airflow database
+        airflow db init &&
+        
+        # Create admin user
+        airflow users create \
+          --username admin \
+          --password admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@local.dev &&
+        
+        # Set Airflow variables for DAG configuration
+        airflow variables set BRONZE_JAR_PATH /opt/jars/data-vault-etl-assembly-0.1.0.jar &&
+        airflow variables set WAREHOUSE_PATH /opt/warehouse &&
+        
+        # Start webserver and scheduler
+        airflow webserver & airflow scheduler
+      "
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+# ============================================================================
+# NETWORKS & VOLUMES (Optional for future multi-container setup)
+# ============================================================================
+
+networks:
+  default:
+    name: data-vault-network
+

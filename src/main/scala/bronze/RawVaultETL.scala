@@ -87,13 +87,25 @@ object RawVaultETL {
       // Create Raw Vault tables if not exist
       bronze.RawVaultSchema.createAllTables()
 
-      // Process entities
+      // Log catalog / database context for troubleshooting only
+      println("\n🔍 Verifying Spark catalog context (informational)...")
+      val currentDatabase = spark.sql("SELECT current_database()").first().getString(0)
+      println(s"   Current database: $currentDatabase")
+      val databases = spark.sql("SHOW DATABASES").collect().map(_.getString(0))
+      println(s"   Available databases: ${databases.mkString(", ")}")
+      // IMPORTANT:
+      // - We do NOT call `USE bronze` here.
+      // - All tables are always referenced as `bronze.<table>` fully qualified.
+      //   This makes the job portable across local / remote HMS and avoids
+      //   relying on mutable session state.
+
+      // Process entities (all table references use `bronze.*`)
       entity match {
-        case Some("customer") => processCustomer(mode)
-        case Some("account") => processAccount(mode)
+        case Some("customer")    => processCustomer(mode)
+        case Some("account")     => processAccount(mode)
         case Some("transaction") => processTransaction(mode)
-        case None => processAll(mode)
-        case _ => throw new IllegalArgumentException(s"Unknown entity: ${entity.get}")
+        case None                 => processAll(mode)
+        case _                    => throw new IllegalArgumentException(s"Unknown entity: ${entity.get}")
       }
 
       println("\n✅ Raw Vault ETL completed successfully")
@@ -114,49 +126,74 @@ object RawVaultETL {
    * └─────────────────────────────────────────────────────────────────┘
    */
   def createSparkSession(): SparkSession = {
+    println("\n🚀 Initializing Spark Session with Iceberg catalog (spark_catalog) ...")
 
-    println("\n🚀 Initializing Spark Session with Iceberg & Hive Metastore...")
+    // Respecter propriétés JVM puis variables d'env
+    def propOrEnv(prop: String, env: String, default: String = ""): String =
+      Option(System.getProperty(prop))
+        .orElse(sys.env.get(env))
+        .filter(_.nonEmpty)
+        .getOrElse(default)
 
-    // Récupère un éventuel HMS externe (Thrift) via variable d'environnement
+    // Apply hadoop home if provided (winutils)
+    Option(System.getProperty("hadoop.home.dir"))
+      .orElse(sys.env.get("HADOOP_HOME"))
+      .foreach(dir => {
+        System.setProperty("hadoop.home.dir", dir)
+        println(s"🔧 hadoop.home.dir = $dir")
+      })
+
+    // Prefer IPv4 by default (can be overridden)
+    val preferIPv4 = propOrEnv("java.net.preferIPv4Stack", "JAVA_NET_PREFER_IPV4", "true")
+    System.setProperty("java.net.preferIPv4Stack", preferIPv4)
+    println(s"🔧 java.net.preferIPv4Stack = $preferIPv4")
+
+    // Driver networking defaults (allow override)
+    val driverHost = propOrEnv("spark.driver.host", "SPARK_DRIVER_HOST", "127.0.0.1")
+    val bindAddress = propOrEnv("spark.driver.bindAddress", "SPARK_DRIVER_BIND_ADDRESS", driverHost)
+    val driverPortOpt = Option(System.getProperty("spark.driver.port")).orElse(sys.env.get("SPARK_DRIVER_PORT"))
+
+    val warehouse = propOrEnv("spark.sql.catalog.spark_catalog.warehouse", "SPARK_WAREHOUSE", "warehouse")
     val hmsUriOpt = sys.env.get("HIVE_METASTORE_URI").filter(uri => uri != null && uri.trim.nonEmpty)
-    val isEmbedded = hmsUriOpt.isEmpty
 
-    val base = SparkSession.builder()
+    // Base builder with Iceberg SparkCatalog always configured
+    var builder = SparkSession.builder()
       .appName("Raw Vault ETL - Bronze Layer")
       .master("local[*]")
-      .config("spark.sql.extensions",
-              "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
+      .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
       .config("spark.sql.catalog.spark_catalog", "org.apache.iceberg.spark.SparkCatalog")
-      .config("spark.sql.catalog.spark_catalog.type", "hive")
+      .config("spark.driver.host", driverHost)
+      .config("spark.driver.bindAddress", bindAddress)
+      .config("spark.sql.catalog.spark_catalog.warehouse", warehouse)
 
-    // En mode HMS externe, on applique seulement l'URI
-    val withCatalog = hmsUriOpt
-      .map(uri => base.config("spark.sql.catalog.spark_catalog.uri", uri))
-      .getOrElse(base)
+    driverPortOpt.foreach(p => builder = builder.config("spark.driver.port", p))
 
-    // En mode embarqué (Derby), désactiver ACID/locking Hive (Iceberg gère ACID côté format)
-    val builder = if (isEmbedded) withCatalog
-      .config("hive.support.concurrency", "false")
-      .config("hive.txn.manager", "org.apache.hadoop.hive.ql.lockmgr.DummyTxnManager")
-      .config("hive.compactor.initiator.on", "false")
-      .config("hive.compactor.worker.threads", "0")
-      .config("metastore.try.direct.sql", "false")
-      .config("spark.hadoop.hive.support.concurrency", "false")
-      .config("spark.hadoop.hive.txn.manager", "org.apache.hadoop.hive.ql.lockmgr.DummyTxnManager")
-      .config("spark.hadoop.hive.compactor.initiator.on", "false")
-      .config("spark.hadoop.hive.compactor.worker.threads", "0")
-      .config("spark.hadoop.metastore.try.direct.sql", "false")
-    else withCatalog
+    // Choose catalogue type based on HMS presence, but keep Iceberg catalog name fixed
+    val finalBuilder = hmsUriOpt match {
+      case Some(uri) =>
+        println(s"🔧 Using Iceberg catalog with Hive Metastore -> uri = $uri")
+        builder
+          .config("spark.sql.catalog.spark_catalog.type", "hive")
+          .config("spark.sql.catalog.spark_catalog.uri", uri)
+      case None =>
+        println("🔧 Using Iceberg HadoopCatalog (no Hive Metastore)")
+        builder
+          .config("spark.sql.catalog.spark_catalog.type", "hadoop")
+      // warehouse already set above
+    }
 
-    val spark = builder
-      .enableHiveSupport()
-      .getOrCreate()
+    // Enable Hive support only when using external HMS (needed for HiveCatalog)
+    val spark = if (hmsUriOpt.isDefined) {
+      finalBuilder.enableHiveSupport().getOrCreate()
+    } else {
+      finalBuilder.getOrCreate()
+    }
 
     spark.sparkContext.setLogLevel("WARN")
-
-    println(s"✅ Spark ${spark.version} initialized (HMS: ${hmsUriOpt.getOrElse("embedded-derby")})")
+    println(s"✅ Spark ${spark.version} initialized (catalog=spark_catalog, type=${if (hmsUriOpt.isDefined) "hive" else "hadoop"}, warehouse=$warehouse)")
     spark
   }
+
 
   /**
    * ┌─────────────────────────────────────────────────────────────────┐
@@ -254,8 +291,17 @@ object RawVaultETL {
     ).distinct() // Deduplicate on hash key
 
     // Get existing hub records to avoid duplicates
-    val existingHubDF = spark.table("bronze.hub_customer")
-      .select("customer_hash_key")
+    // Check if table exists first
+    val existingHubDF = try {
+      spark.table("bronze.hub_customer")
+        .select("customer_hash_key")
+    } catch {
+      case e: org.apache.spark.sql.catalyst.analysis.NoSuchTableException =>
+        println(s"⚠️  Table bronze.hub_customer not found - this might be the first load")
+        // Return empty DataFrame with correct schema
+        spark.createDataFrame(spark.sparkContext.emptyRDD[org.apache.spark.sql.Row],
+          df.select($"customer_hash_key").schema)
+    }
 
     // Left anti join to find new customers only
     val newCustomersDF = hubDF
@@ -303,34 +349,84 @@ object RawVaultETL {
 
     import spark.implicits._
 
-    // Define descriptive columns for diff hash
-    val descriptiveColumns = Seq(
-      "customer_type", "first_name", "last_name", "company_name",
-      "email", "phone", "date_of_birth", "tax_id", "customer_since",
-      "customer_status", "credit_score"
+    // Actual fields available in the DataFrame (from AvroReader.readAvro)
+    val actualFields = df.columns.toSet
+
+    // Canonical raw descriptive columns for Sat_Customer (must come from customer.avsc)
+    val canonicalDescriptiveColumns = Seq(
+      "customer_type",
+      "first_name",
+      "last_name",
+      "business_name",
+      "email",
+      "phone",
+      "date_of_birth",
+      "ssn",
+      "tax_id",
+      "credit_score",
+      "customer_since",
+      "loyalty_tier",
+      "preferred_contact_method"
     )
 
-    // Generate diff hash for change detection
+    // Effective columns = intersection of canonical list and actual DataFrame fields
+    val effectiveDescriptiveColumns = canonicalDescriptiveColumns.filter(actualFields.contains)
+
+    // Drift diagnostics (for information only, no hard failure for descriptive attrs)
+    val missingDescriptive = canonicalDescriptiveColumns.filterNot(actualFields.contains)
+    val excludedFromExtra = Set(
+      "customer_id",
+      "customer_number",
+      "customer_hash_key",
+      "_load_timestamp",
+      "_source_file",
+      "_file_modification_time"
+    )
+    val extraDescriptive = actualFields
+      .diff(canonicalDescriptiveColumns.toSet)
+      .diff(excludedFromExtra)
+
+    println("\n🔍 Sat_Customer descriptive column alignment (raw):")
+    println(s"   Effective descriptive columns used for diff hash: ${effectiveDescriptiveColumns.mkString(", ")}")
+
+    if (missingDescriptive.nonEmpty) {
+      println(s"⚠️  Raw attributes defined in Sat_Customer but not present in current data/schema: ${missingDescriptive.mkString(", ")}")
+      println("   They are skipped for diff hash and insert until the source/Avro schema provides them.")
+    }
+
+    if (extraDescriptive.nonEmpty) {
+      println(s"⚠️  New schema columns not yet part of Sat_Customer diff hash: ${extraDescriptive.mkString(", ")}")
+      println("   If they should be tracked, add them to canonicalDescriptiveColumns.")
+    }
+
+    // Generate diff hash for change detection (only on existing raw attributes)
     val withDiffHash = HashKeyGenerator.generateDiffHash(
       "customer_diff_hash",
-      descriptiveColumns,
+      effectiveDescriptiveColumns,
       df
     )
 
-    // Prepare satellite records
+    // Build attribute select list dynamically (only include columns that exist)
+    val attributeCols = canonicalDescriptiveColumns
+      .filter(actualFields.contains)
+      .map(col)
+
+    // Prepare satellite records (raw attributes only)
     val satDF = withDiffHash.select(
       $"customer_hash_key",
       $"customer_type",
       $"first_name",
       $"last_name",
-      $"company_name",
+      $"business_name",
       $"email",
       $"phone",
       $"date_of_birth",
+      $"ssn",
       $"tax_id",
-      $"customer_since",
-      $"customer_status",
       $"credit_score",
+      $"customer_since",
+      $"loyalty_tier",
+      $"preferred_contact_method",
       $"customer_diff_hash",
       current_timestamp().as("valid_from"),
       lit(null: java.sql.Timestamp).as("valid_to"),
@@ -530,31 +626,61 @@ object RawVaultETL {
 
     import spark.implicits._
 
-    val descriptiveColumns = Seq(
-      "account_number", "account_type", "product_id", "branch_id",
-      "balance", "available_balance", "currency_code", "interest_rate",
-      "credit_limit", "opened_date", "account_status"
+    val actualFields = df.columns.toSet
+
+    // Raw descriptive columns based on account.avsc
+    val canonicalDescriptiveColumns = Seq(
+      "account_number",
+      "product_id",
+      "branch_id",
+      "account_status",
+      "current_balance",
+      "available_balance",
+      "currency",
+      "overdraft_limit",
+      "interest_rate",
+      "opened_date",
+      "closed_date",
+      "last_transaction_date",
+      "updated_at"
     )
+
+    val effectiveDescriptiveColumns = canonicalDescriptiveColumns.filter(actualFields.contains)
+
+    val missingDescriptive = canonicalDescriptiveColumns.filterNot(actualFields.contains)
+    val excludedFromExtra = Set("account_id", "customer_id", "account_hash_key")
+    val extraDescriptive = actualFields.diff(canonicalDescriptiveColumns.toSet).diff(excludedFromExtra)
+
+    println("\n🔍 Sat_Account descriptive column alignment (raw):")
+    println(s"   Effective descriptive columns used for diff hash: ${effectiveDescriptiveColumns.mkString(", ")}")
+    if (missingDescriptive.nonEmpty) {
+      println(s"⚠️  Raw attributes defined in Sat_Account but not present in current data/schema: ${missingDescriptive.mkString(", ")}")
+    }
+    if (extraDescriptive.nonEmpty) {
+      println(s"⚠️  New schema columns not yet part of Sat_Account diff hash: ${extraDescriptive.mkString(", ")}")
+    }
 
     val withDiffHash = HashKeyGenerator.generateDiffHash(
       "account_diff_hash",
-      descriptiveColumns,
+      effectiveDescriptiveColumns,
       df
     )
 
     val satDF = withDiffHash.select(
       $"account_hash_key",
       $"account_number",
-      $"account_type",
       $"product_id",
       $"branch_id",
-      $"balance",
-      $"available_balance",
-      $"currency_code",
-      $"interest_rate",
-      $"credit_limit",
-      $"opened_date",
       $"account_status",
+      $"current_balance",
+      $"available_balance",
+      $"currency",
+      $"overdraft_limit",
+      $"interest_rate",
+      $"opened_date",
+      $"closed_date",
+      $"last_transaction_date",
+      $"updated_at",
       $"account_diff_hash",
       current_timestamp().as("valid_from"),
       lit(null: java.sql.Timestamp).as("valid_to"),
@@ -577,7 +703,6 @@ object RawVaultETL {
     val rowCount = changedRecordsDF.count()
 
     if (rowCount > 0) {
-      // End-date previous versions (SCD Type 2 proper implementation)
       endDatePreviousSatelliteVersions(
         "bronze.sat_account",
         "account_hash_key",
@@ -729,15 +854,42 @@ object RawVaultETL {
 
     import spark.implicits._
 
-    val descriptiveColumns = Seq(
-      "transaction_number", "transaction_type", "transaction_date",
-      "transaction_time", "total_amount", "currency_code", "description",
-      "channel", "status"
+    val actualFields = df.columns.toSet
+
+    // Raw descriptive columns based on transaction_header.avsc
+    val canonicalDescriptiveColumns = Seq(
+      "transaction_number",
+      "transaction_type",
+      "transaction_date",
+      "posting_date",
+      "total_amount",
+      "description",
+      "channel",
+      "transaction_status",
+      "location",
+      "reference_number",
+      "initiated_by",
+      "created_at",
+      "updated_at"
     )
+
+    val effectiveDescriptiveColumns = canonicalDescriptiveColumns.filter(actualFields.contains)
+    val missingDescriptive = canonicalDescriptiveColumns.filterNot(actualFields.contains)
+    val excludedFromExtra = Set("transaction_id", "account_id", "transaction_hash_key")
+    val extraDescriptive = actualFields.diff(canonicalDescriptiveColumns.toSet).diff(excludedFromExtra)
+
+    println("\n🔍 Sat_Transaction descriptive column alignment (raw):")
+    println(s"   Effective descriptive columns used for diff hash: ${effectiveDescriptiveColumns.mkString(", ")}")
+    if (missingDescriptive.nonEmpty) {
+      println(s"⚠️  Raw attributes defined in Sat_Transaction but not present in current data/schema: ${missingDescriptive.mkString(", ")}")
+    }
+    if (extraDescriptive.nonEmpty) {
+      println(s"⚠️  New schema columns not yet part of Sat_Transaction diff hash: ${extraDescriptive.mkString(", ")}")
+    }
 
     val withDiffHash = HashKeyGenerator.generateDiffHash(
       "transaction_diff_hash",
-      descriptiveColumns,
+      effectiveDescriptiveColumns,
       df
     )
 
@@ -746,12 +898,16 @@ object RawVaultETL {
       $"transaction_number",
       $"transaction_type",
       $"transaction_date",
-      $"transaction_time",
+      $"posting_date",
       $"total_amount",
-      $"currency_code",
       $"description",
       $"channel",
-      $"status",
+      $"transaction_status",
+      $"location",
+      $"reference_number",
+      $"initiated_by",
+      $"created_at",
+      $"updated_at",
       $"transaction_diff_hash",
       current_timestamp().as("valid_from"),
       lit(null: java.sql.Timestamp).as("valid_to"),
@@ -774,7 +930,6 @@ object RawVaultETL {
     val rowCount = changedRecordsDF.count()
 
     if (rowCount > 0) {
-      // End-date previous versions before inserting new ones
       endDatePreviousSatelliteVersions(
         "bronze.sat_transaction",
         "transaction_hash_key",
@@ -860,24 +1015,52 @@ object RawVaultETL {
 
     import spark.implicits._
 
-    val descriptiveColumns = Seq(
-      "item_type", "item_description", "item_amount",
-      "item_category", "merchant_id"
+    val actualFields = df.columns.toSet
+
+    // Raw descriptive columns based on transaction_item.avsc
+    val canonicalDescriptiveColumns = Seq(
+      "item_amount",
+      "category_id",
+      "merchant_name",
+      "merchant_category_code",
+      "item_description",
+      "created_at",
+      "payee_name",
+      "payee_account",
+      "is_recurring"
     )
+
+    val effectiveDescriptiveColumns = canonicalDescriptiveColumns.filter(actualFields.contains)
+    val missingDescriptive = canonicalDescriptiveColumns.filterNot(actualFields.contains)
+    val excludedFromExtra = Set("item_id", "transaction_id", "item_sequence", "transaction_item_hash_key")
+    val extraDescriptive = actualFields.diff(canonicalDescriptiveColumns.toSet).diff(excludedFromExtra)
+
+    println("\n🔍 Sat_Transaction_Item descriptive column alignment (raw):")
+    println(s"   Effective descriptive columns used for diff hash: ${effectiveDescriptiveColumns.mkString(", ")}")
+    if (missingDescriptive.nonEmpty) {
+      println(s"⚠️  Raw attributes defined in Sat_Transaction_Item but not present in current data/schema: ${missingDescriptive.mkString(", ")}")
+    }
+    if (extraDescriptive.nonEmpty) {
+      println(s"⚠️  New schema columns not yet part of Sat_Transaction_Item diff hash: ${extraDescriptive.mkString(", ")}")
+    }
 
     val withDiffHash = HashKeyGenerator.generateDiffHash(
       "item_diff_hash",
-      descriptiveColumns,
+      effectiveDescriptiveColumns,
       df
     )
 
     val satDF = withDiffHash.select(
       $"transaction_item_hash_key",
-      $"item_type",
-      $"item_description",
       $"item_amount",
-      $"item_category",
-      $"merchant_id",
+      $"category_id",
+      $"merchant_name",
+      $"merchant_category_code",
+      $"item_description",
+      $"created_at",
+      $"payee_name",
+      $"payee_account",
+      $"is_recurring",
       $"item_diff_hash",
       current_timestamp().as("valid_from"),
       lit(null: java.sql.Timestamp).as("valid_to"),
@@ -900,7 +1083,6 @@ object RawVaultETL {
     val rowCount = changedRecordsDF.count()
 
     if (rowCount > 0) {
-      // End-date previous versions before inserting new ones
       endDatePreviousSatelliteVersions(
         "bronze.sat_transaction_item",
         "transaction_item_hash_key",

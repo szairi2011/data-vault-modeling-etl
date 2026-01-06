@@ -54,40 +54,27 @@
       "doc": "Detailed description of line item (e.g., 'Electric Bill - Account #123456789', 'Monthly Subscription Fee'). Shown in transaction detail view. Max 200 characters."
     },
     {
-      "name": "reference_number",
-      "type": ["null", "string"],
-      "default": null,
-      "doc": "External reference number (e.g., merchant transaction ID, bill account number, check number). Used for reconciliation with external systems and dispute resolution."
-    },
-    {
-      "name": "quantity",
-      "type": ["null", "int"],
-      "default": null,
-      "doc": "Quantity for this line item (e.g., number of items purchased in e-commerce). NULL for single-unit transactions. Future use for retail analytics."
-    },
-    {
-      "name": "unit_price",
-      "type": ["null", {
-        "type": "bytes",
-        "logicalType": "decimal",
-        "precision": 15,
-        "scale": 2
-      }],
-      "default": null,
-      "doc": "Price per unit. item_amount = quantity * unit_price. NULL for non-itemized transactions. Enables price trend analysis."
-    },
-    {
       "name": "created_at",
-      "type": "long",
-      "logicalType": "timestamp-millis",
+      "type": {"type": "long", "logicalType": "timestamp-millis"},
       "doc": "Timestamp when item record was created. Used for item-level audit trail."
     },
     {
-      "name": "updated_at",
-      "type": "long",
-      "logicalType": "timestamp-millis",
-      "doc": "CDC tracking field. Last modification timestamp for incremental extraction."
+      "name": "payee_name",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Who received the payment (for PAYMENT transactions)."
+    },
+    {
+      "name": "payee_account",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Payee account number (for TRANSFER/PAYMENT)."
+    },
+    {
+      "name": "is_recurring",
+      "type": "boolean",
+      "default": false,
+      "doc": "Is this a recurring payment item? Default FALSE."
     }
   ]
 }
-

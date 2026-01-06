@@ -291,20 +291,30 @@ The system handles source schema changes gracefully:
 - Data Vault absorbs new columns automatically
 - Historical queries remain unaffected
 
-### 3. Auditability
+### 3. Single Source of Truth for Schema Validation
+Schema validation logic derives from Avro schema definitions (`nifi/schemas/*.avsc`):
+- **No hardcoded field lists** - Required fields extracted dynamically from `.avsc` files
+- **AvroReader utility** - Loads schemas at runtime and caches them for performance
+- **Validation rules** - Fields without `null` union or `default` value are considered required
+- **Consistency guaranteed** - Schema changes in `.avsc` automatically reflected in validation
+- **Clear error messages** - Validation failures point to specific `.avsc` file for correction
+
+**Example:** When `customer.avsc` is updated to add a new required field, the Spark ETL automatically enforces it without code changes.
+
+### 4. Auditability
 Every data point is traceable:
 - Load timestamps on all records
 - valid_from/valid_to tracking in Satellites
 - Source system tracking in Hubs
 - Full lineage from source to analytics
 
-### 4. Performance Through Layering
+### 5. Performance Through Layering
 Each layer optimizes for different access patterns:
 - Bronze: Write-optimized (append-only)
 - Silver: Read-optimized (pre-joined)
 - Gold: Aggregate-optimized (star schema)
 
-### 5. Decoupling
+### 6. Decoupling
 Components are loosely coupled:
 - NiFi writes files, Spark reads files (no direct coupling)
 - Each layer can be rebuilt independently

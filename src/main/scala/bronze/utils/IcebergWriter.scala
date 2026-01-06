@@ -105,48 +105,17 @@ object IcebergWriter {
       |└────────────────────────────────────────────────────────────────┘
     """.stripMargin)
 
-    // Write operation with Iceberg format
-    val writer = df.write.format("iceberg")
-    if (partitionCols.nonEmpty) {
-      // Partitioned write: data will be physically organized by these columns
-      writer
-        .partitionBy(partitionCols: _*)
-        .mode("append")
-        .save(tableIdentifier)
-    } else {
-      // Non-partitioned write
-      writer
-        .mode("append")
-        .save(tableIdentifier)
-    }
+    // IMPORTANT:
+    // - Tables are created via SQL in RawVaultSchema as
+    //   `CREATE TABLE bronze.<table> USING iceberg ...`.
+    // - We append using Spark's catalog (`insertInto`) so the same
+    //   catalog / namespace resolution is used for both create and write.
+    // - Partitioning is defined at table creation time (PARTITIONED BY),
+    //   so we do not set partitionBy here.
 
-    /**
-     * WHAT JUST HAPPENED (Internals):
-     *
-     * 1. SCHEMA VALIDATION:
-     *    - Iceberg checked if df.schema matches table schema
-     *    - Schema evolution allowed if compatible (add columns)
-     *    - Throws exception if incompatible (drop column, change type)
-     *
-     * 2. DATA FILES WRITTEN:
-     *    - Each partition written as separate Parquet file(s)
-     *    - File naming: {partition_path}/data-{uuid}.parquet
-     *    - Column statistics collected (min/max/null_count)
-     *
-     * 3. MANIFEST FILES CREATED:
-     *    - List of new data files with metadata
-     *    - Stored in: {table_location}/metadata/manifest-{uuid}.avro
-     *
-     * 4. SNAPSHOT COMMITTED:
-     *    - New snapshot entry added to metadata.json
-     *    - Snapshot ID, timestamp, manifest list stored
-     *    - Previous snapshots retained (time travel enabled)
-     *
-     * 5. HMS UPDATED (if configured):
-     *    - Table location remains unchanged
-     *    - HMS still points to same Iceberg metadata directory
-     *    - Impala can refresh metadata to see new snapshot
-     */
+    df.write
+      .mode("append")
+      .insertInto(tableIdentifier)
 
     println(s"✅ Successfully appended ${df.count()} rows to $tableIdentifier")
   }

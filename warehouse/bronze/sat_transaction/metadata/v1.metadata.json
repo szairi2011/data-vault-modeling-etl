@@ -1,0 +1,155 @@
+{
+  "format-version" : 2,
+  "table-uuid" : "9162bef1-58c4-4341-a209-5995bf665118",
+  "location" : "warehouse/bronze/sat_transaction",
+  "last-sequence-number" : 0,
+  "last-updated-ms" : 1767695895796,
+  "last-column-id" : 19,
+  "current-schema-id" : 0,
+  "schemas" : [ {
+    "type" : "struct",
+    "schema-id" : 0,
+    "fields" : [ {
+      "id" : 1,
+      "name" : "transaction_hash_key",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Foreign key to Hub_Transaction"
+    }, {
+      "id" : 2,
+      "name" : "transaction_number",
+      "required" : false,
+      "type" : "string",
+      "doc" : "User-facing transaction reference"
+    }, {
+      "id" : 3,
+      "name" : "transaction_type",
+      "required" : false,
+      "type" : "string",
+      "doc" : "High-level transaction category"
+    }, {
+      "id" : 4,
+      "name" : "transaction_date",
+      "required" : false,
+      "type" : "timestamptz",
+      "doc" : "When transaction occurred"
+    }, {
+      "id" : 5,
+      "name" : "posting_date",
+      "required" : false,
+      "type" : "timestamptz",
+      "doc" : "When transaction was posted"
+    }, {
+      "id" : 6,
+      "name" : "total_amount",
+      "required" : false,
+      "type" : "decimal(15, 2)",
+      "doc" : "Total transaction amount"
+    }, {
+      "id" : 7,
+      "name" : "description",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Transaction description from source"
+    }, {
+      "id" : 8,
+      "name" : "channel",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Channel (ATM, BRANCH, ONLINE, MOBILE, PHONE)"
+    }, {
+      "id" : 9,
+      "name" : "transaction_status",
+      "required" : false,
+      "type" : "string",
+      "doc" : "PENDING, COMPLETED, FAILED, REVERSED"
+    }, {
+      "id" : 10,
+      "name" : "location",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Where transaction occurred"
+    }, {
+      "id" : 11,
+      "name" : "reference_number",
+      "required" : false,
+      "type" : "string",
+      "doc" : "External reference number"
+    }, {
+      "id" : 12,
+      "name" : "initiated_by",
+      "required" : false,
+      "type" : "string",
+      "doc" : "User or system that initiated transaction"
+    }, {
+      "id" : 13,
+      "name" : "created_at",
+      "required" : false,
+      "type" : "timestamptz",
+      "doc" : "Creation timestamp in source"
+    }, {
+      "id" : 14,
+      "name" : "updated_at",
+      "required" : false,
+      "type" : "timestamptz",
+      "doc" : "CDC last modification timestamp"
+    }, {
+      "id" : 15,
+      "name" : "transaction_diff_hash",
+      "required" : false,
+      "type" : "string",
+      "doc" : "MD5 hash of descriptive columns"
+    }, {
+      "id" : 16,
+      "name" : "valid_from",
+      "required" : false,
+      "type" : "timestamptz",
+      "doc" : "Start of validity period"
+    }, {
+      "id" : 17,
+      "name" : "valid_to",
+      "required" : false,
+      "type" : "timestamptz",
+      "doc" : "End of validity period (NULL for current)"
+    }, {
+      "id" : 18,
+      "name" : "load_date",
+      "required" : false,
+      "type" : "date",
+      "doc" : "Date when record was loaded"
+    }, {
+      "id" : 19,
+      "name" : "record_source",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Source system identifier"
+    } ]
+  } ],
+  "default-spec-id" : 0,
+  "partition-specs" : [ {
+    "spec-id" : 0,
+    "fields" : [ {
+      "name" : "load_date",
+      "transform" : "identity",
+      "source-id" : 18,
+      "field-id" : 1000
+    } ]
+  } ],
+  "last-partition-id" : 1000,
+  "default-sort-order-id" : 0,
+  "sort-orders" : [ {
+    "order-id" : 0,
+    "fields" : [ ]
+  } ],
+  "properties" : {
+    "owner" : "sofiane",
+    "comment" : "Data Vault Satellite: Transaction header raw attributes with history",
+    "write.parquet.compression-codec" : "snappy"
+  },
+  "current-snapshot-id" : -1,
+  "refs" : { },
+  "snapshots" : [ ],
+  "statistics" : [ ],
+  "snapshot-log" : [ ],
+  "metadata-log" : [ ]
+}

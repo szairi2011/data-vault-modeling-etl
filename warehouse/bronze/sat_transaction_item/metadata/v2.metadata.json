@@ -1,0 +1,162 @@
+{
+  "format-version" : 2,
+  "table-uuid" : "94337a14-dfd5-46c5-90c8-ab0f6fb3536d",
+  "location" : "warehouse/bronze/sat_transaction_item",
+  "last-sequence-number" : 1,
+  "last-updated-ms" : 1767697228418,
+  "last-column-id" : 15,
+  "current-schema-id" : 0,
+  "schemas" : [ {
+    "type" : "struct",
+    "schema-id" : 0,
+    "fields" : [ {
+      "id" : 1,
+      "name" : "transaction_item_hash_key",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Foreign key to Hub_Transaction_Item"
+    }, {
+      "id" : 2,
+      "name" : "item_amount",
+      "required" : false,
+      "type" : "decimal(15, 2)",
+      "doc" : "Line item amount"
+    }, {
+      "id" : 3,
+      "name" : "category_id",
+      "required" : false,
+      "type" : "int",
+      "doc" : "Category reference identifier"
+    }, {
+      "id" : 4,
+      "name" : "merchant_name",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Merchant or payee name"
+    }, {
+      "id" : 5,
+      "name" : "merchant_category_code",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Merchant Category Code (MCC)"
+    }, {
+      "id" : 6,
+      "name" : "item_description",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Detailed item description"
+    }, {
+      "id" : 7,
+      "name" : "created_at",
+      "required" : false,
+      "type" : "timestamptz",
+      "doc" : "Item creation timestamp in source"
+    }, {
+      "id" : 8,
+      "name" : "payee_name",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Payment recipient name"
+    }, {
+      "id" : 9,
+      "name" : "payee_account",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Payee account number"
+    }, {
+      "id" : 10,
+      "name" : "is_recurring",
+      "required" : false,
+      "type" : "boolean",
+      "doc" : "Is this a recurring payment item"
+    }, {
+      "id" : 11,
+      "name" : "item_diff_hash",
+      "required" : false,
+      "type" : "string",
+      "doc" : "MD5 hash of descriptive columns"
+    }, {
+      "id" : 12,
+      "name" : "valid_from",
+      "required" : false,
+      "type" : "timestamptz",
+      "doc" : "Start of validity period"
+    }, {
+      "id" : 13,
+      "name" : "valid_to",
+      "required" : false,
+      "type" : "timestamptz",
+      "doc" : "End of validity period (NULL for current)"
+    }, {
+      "id" : 14,
+      "name" : "load_date",
+      "required" : false,
+      "type" : "date",
+      "doc" : "Date when record was loaded"
+    }, {
+      "id" : 15,
+      "name" : "record_source",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Source system identifier"
+    } ]
+  } ],
+  "default-spec-id" : 0,
+  "partition-specs" : [ {
+    "spec-id" : 0,
+    "fields" : [ {
+      "name" : "load_date",
+      "transform" : "identity",
+      "source-id" : 14,
+      "field-id" : 1000
+    } ]
+  } ],
+  "last-partition-id" : 1000,
+  "default-sort-order-id" : 0,
+  "sort-orders" : [ {
+    "order-id" : 0,
+    "fields" : [ ]
+  } ],
+  "properties" : {
+    "owner" : "sofiane",
+    "comment" : "Data Vault Satellite: Transaction item raw attributes (multi-item pattern) with history",
+    "write.parquet.compression-codec" : "snappy"
+  },
+  "current-snapshot-id" : 7703327514080292389,
+  "refs" : {
+    "main" : {
+      "snapshot-id" : 7703327514080292389,
+      "type" : "branch"
+    }
+  },
+  "snapshots" : [ {
+    "sequence-number" : 1,
+    "snapshot-id" : 7703327514080292389,
+    "timestamp-ms" : 1767697228418,
+    "summary" : {
+      "operation" : "append",
+      "spark.app.id" : "local-1767697214473",
+      "added-data-files" : "1",
+      "added-records" : "7977",
+      "added-files-size" : "574076",
+      "changed-partition-count" : "1",
+      "total-records" : "7977",
+      "total-files-size" : "574076",
+      "total-data-files" : "1",
+      "total-delete-files" : "0",
+      "total-position-deletes" : "0",
+      "total-equality-deletes" : "0"
+    },
+    "manifest-list" : "warehouse/bronze/sat_transaction_item/metadata/snap-7703327514080292389-1-74149032-9e3f-4e46-b048-04647d3efe4b.avro",
+    "schema-id" : 0
+  } ],
+  "statistics" : [ ],
+  "snapshot-log" : [ {
+    "timestamp-ms" : 1767697228418,
+    "snapshot-id" : 7703327514080292389
+  } ],
+  "metadata-log" : [ {
+    "timestamp-ms" : 1767695895830,
+    "metadata-file" : "warehouse/bronze/sat_transaction_item/metadata/v1.metadata.json"
+  } ]
+}

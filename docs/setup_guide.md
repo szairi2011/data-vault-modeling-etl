@@ -258,6 +258,7 @@ LIMIT 10;
 - **Type safety:** NiFi validates against `.avsc` schema before writing
 - **Spark compatibility:** Spark reads Avro natively with schema inference
 - **Schema evolution:** When source adds columns, Avro handles gracefully
+- **Single source of truth:** Avro schemas (`nifi/schemas/*.avsc`) define both NiFi validation rules AND Spark required fields - no duplication
 
 ### Actions
 
@@ -530,11 +531,498 @@ account_hash_key     -- FK to hub_account
 load_timestamp       -- When relationship first seen
 ```
 
-### Actions
+### Execution Model: Progressive Validation (3 Sub-Tasks)
 
-#### 3.1: Create Data Vault Tables
+Before automating the Bronze Layer ETL, we validate the code through three progressive execution modes:
 
-```powershell
+1. **Sub-Task 1:** Run from IDE (IntelliJ) - Fastest feedback loop for development
+2. **Sub-Task 2:** Run via spark-submit - Validate JAR packaging and CLI arguments
+3. **Sub-Task 3:** Run from Airflow UI - Test orchestration and production workflow
+
+**Why this progression?**
+- Catches configuration issues early (IDE shows errors immediately)
+- Validates deployment artifacts (JAR contains all dependencies)
+- Proves end-to-end workflow (DAG configuration correct)
+
+---
+
+### Sub-Task 1: Run Bronze ETL from IntelliJ IDE
+
+**Objective:** Execute `RawVaultETL.scala` directly from the IDE with full debugging capabilities.
+
+#### 1.1 Pre-Execution Validation
+
+**Check staging data exists:**
+```bash
+# Linux/Mac
+ls -la warehouse/staging/customer/*.avro
+
+# Windows
+dir warehouse\staging\customer\*.avro
+```
+Expected: At least one .avro file
+
+**Check project compiles:**
+```bash
+sbt compile
+```
+Should complete with [success]
+
+#### 1.2 Configure IntelliJ Run Configuration
+
+1. Open `src/main/scala/bronze/RawVaultETL.scala` in IntelliJ
+2. Right-click on the file → **Modify Run Configuration...**
+3. Set the following:
+
+**Program arguments:**
+```
+--mode full --staging-path warehouse/staging --output-path warehouse/bronze/raw-vault
+```
+
+**VM options (Add these to configure Spark locally):**
+```
+-Dspark.master=local[*]
+-Dspark.sql.catalog.spark_catalog=org.apache.iceberg.spark.SparkCatalog
+-Dspark.sql.catalog.spark_catalog.type=hadoop
+-Dspark.sql.catalog.spark_catalog.warehouse=warehouse/bronze
+-Dspark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
+```
+
+**Environment variables (if needed):**
+```
+HIVE_METASTORE_URI=
+```
+(Leave empty for embedded Hive metastore)
+
+#### 1.3 Execute and Monitor
+
+**Run the application:**
+- Press `Shift+F10` (or click the green play button)
+- Watch the console output
+
+**Expected console output (abbreviated):**
+```
+╔════════════════════════════════════════════════════════════════╗
+║         DATA VAULT 2.0 - RAW VAULT ETL (BRONZE LAYER)         ║
+╚════════════════════════════════════════════════════════════════╝
+
+Configuration:
+  Mode: full (full|incremental)
+  Entity: all
+
+🚀 Initializing Spark Session with Iceberg & Hive Metastore...
+✅ Spark 3.5.0 initialized
+
+┌────────────────────────────────────────────────────────────────┐
+│ PROCESSING CUSTOMER ENTITY                                     │
+└────────────────────────────────────────────────────────────────┘
+
+📖 READING AVRO FILES
+   Path: warehouse/staging/customer/*.avro
+   Records found: 1000
+
+📦 Loading Hub_Customer...
+✅ Loaded 1000 new customers to Hub_Customer
+
+🛰️  Loading Sat_Customer...
+✅ Loaded 1000 changed customer records to Sat_Customer
+
+✅ Raw Vault ETL completed successfully
+```
+
+**Execution time:** Expect 30-60 seconds for 1,000 customers on local machine.
+
+#### 1.4 Verify Output Files
+
+**Check Iceberg table directories:**
+```bash
+# Linux/Mac
+ls -la warehouse/bronze/raw-vault/hub_customer/
+
+# Windows
+dir warehouse\bronze\raw-vault\hub_customer\
+```
+
+**Expected structure:**
+```
+warehouse/bronze/raw-vault/hub_customer/
+├── metadata/
+│   ├── v1.metadata.json
+│   └── version-hint.text
+└── data/
+    └── 00000-0-<uuid>.parquet
+```
+
+#### 1.5 Run Validation Queries in IntelliJ Scala Console
+
+**Open Scala Console in IntelliJ:**
+- Tools → Scala REPL → Start Scala Console (or Worksheet)
+
+**Paste and execute:**
+```scala
+import org.apache.spark.sql.SparkSession
+
+val spark = SparkSession.builder()
+  .master("local[*]")
+  .appName("Bronze Validation")
+  .config("spark.sql.catalog.spark_catalog", "org.apache.iceberg.spark.SparkCatalog")
+  .config("spark.sql.catalog.spark_catalog.type", "hadoop")
+  .config("spark.sql.catalog.spark_catalog.warehouse", "warehouse/bronze")
+  .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
+  .getOrCreate()
+
+// Verify Hub_Customer record count
+val hubCount = spark.table("raw_vault.hub_customer").count()
+println(s"Hub_Customer records: $hubCount")  // Expected: 1000
+
+// Check for duplicates (should be 0)
+spark.sql("""
+  SELECT customer_hash_key, COUNT(*) as cnt
+  FROM raw_vault.hub_customer
+  GROUP BY customer_hash_key
+  HAVING cnt > 1
+""").show()
+// Expected: Empty result (no duplicates)
+
+// Sample records
+spark.table("raw_vault.hub_customer").show(5, truncate = false)
+```
+
+**Success criteria:**
+- ✅ Hub record count matches staging Avro file count
+- ✅ No duplicate hash keys in Hubs
+- ✅ Satellite records have `load_date` and `valid_from` populated
+- ✅ All hash keys are 64-character hex strings (SHA-256)
+
+---
+
+### Sub-Task 2: Run Bronze ETL via spark-submit
+
+**Objective:** Validate JAR packaging, dependencies, and command-line execution.
+
+#### 2.1 Build the Uber JAR
+
+**Compile and assemble:**
+```bash
+sbt clean assembly
+```
+
+**Expected output:**
+```
+[info] Strategy 'Discard' was applied to a file (META-INF/...)
+[info] Strategy 'first' was applied to a file (reference.conf)
+...
+[success] Total time: 45 s
+[success] Artifact written to target/scala-2.12/data-vault-etl-assembly-0.1.0.jar
+```
+
+**Verify JAR size (cross-platform):**
+```bash
+# Linux/Mac
+ls -lh target/scala-2.12/data-vault-etl-assembly-0.1.0.jar
+
+# Windows PowerShell
+(Get-Item target\scala-2.12\data-vault-etl-assembly-0.1.0.jar).Length / 1MB
+```
+Expected: 50-100 MB (includes Iceberg, Avro dependencies)
+
+**Copy JAR to jars directory for Airflow (optional):**
+```bash
+# Linux/Mac
+mkdir -p jars
+cp target/scala-2.12/data-vault-etl-assembly-0.1.0.jar jars/
+
+# Windows
+New-Item -ItemType Directory -Force -Path jars
+Copy-Item target\scala-2.12\data-vault-etl-assembly-0.1.0.jar jars\
+```
+
+#### 2.2 Execute with spark-submit
+
+**Clean previous run (optional - for testing idempotency, skip this):**
+```bash
+# Linux/Mac
+rm -rf warehouse/bronze/raw-vault/*
+
+# Windows
+Remove-Item -Recurse -Force warehouse\bronze\raw-vault\*
+```
+
+**Run spark-submit (cross-platform):**
+```bash
+# Linux/Mac
+spark-submit \
+  --class bronze.RawVaultETL \
+  --master local[*] \
+  --conf spark.sql.catalog.spark_catalog=org.apache.iceberg.spark.SparkCatalog \
+  --conf spark.sql.catalog.spark_catalog.type=hadoop \
+  --conf spark.sql.catalog.spark_catalog.warehouse=warehouse/bronze \
+  --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions \
+  --conf spark.driver.memory=2g \
+  --conf spark.executor.memory=2g \
+  target/scala-2.12/data-vault-etl-assembly-0.1.0.jar \
+  --mode full \
+  --staging-path warehouse/staging \
+  --output-path warehouse/bronze/raw-vault
+
+# Windows PowerShell (use backticks for line continuation)
+spark-submit `
+  --class bronze.RawVaultETL `
+  --master local[*] `
+  --conf spark.sql.catalog.spark_catalog=org.apache.iceberg.spark.SparkCatalog `
+  --conf spark.sql.catalog.spark_catalog.type=hadoop `
+  --conf spark.sql.catalog.spark_catalog.warehouse=warehouse/bronze `
+  --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions `
+  --conf spark.driver.memory=2g `
+  --conf spark.executor.memory=2g `
+  target\scala-2.12\data-vault-etl-assembly-0.1.0.jar `
+  --mode full `
+  --staging-path warehouse/staging `
+  --output-path warehouse/bronze/raw-vault
+```
+
+**Expected output:** Same as Sub-Task 1.3 (console output identical)
+
+**Execution time:** 30-60 seconds (similar to IDE run)
+
+#### 2.3 Test Idempotency
+
+**Re-run the same command without cleaning:**
+```bash
+# Run spark-submit command again (same as above)
+```
+
+**Expected behavior:**
+- ✅ No errors thrown
+- ✅ Hub tables: 0 new records loaded (all already exist)
+- ✅ Satellite tables: 0 new records (diff hash unchanged)
+- ✅ Console shows: "ℹ️  No new customers to load (all already exist in hub)"
+
+**Why test idempotency?**
+- Production jobs may retry on failure
+- Re-running should be safe (no duplicates)
+- Data Vault pattern enforces insert-only (no updates/deletes)
+
+#### 2.4 Run Automated Validation
+
+**Use the portable Scala validator:**
+```bash
+sbt "runMain bronze.BronzeValidator"
+```
+
+**Expected validation output:**
+```
+╔════════════════════════════════════════════════════════════════╗
+║         BRONZE LAYER DATA VALIDATION                          ║
+╚════════════════════════════════════════════════════════════════╝
+
+📊 Validation 1: Record Counts
+─────────────────────────────────
+  ✓ Hub_Customer               : 1,000 records
+  ✓ Sat_Customer               : 1,000 records
+  ✓ Hub_Account                : 2,000 records
+  ✓ Sat_Account                : 2,000 records
+✅ Record count check completed
+
+🔍 Validation 2: Duplicate Hash Keys Check
+──────────────────────────────────────────
+  ✓ bronze.hub_customer: No duplicates
+  ✓ bronze.hub_account: No duplicates
+✅ No duplicates found in Hubs
+
+🔑 Validation 3: Hash Key Format
+─────────────────────────────────
+  Sample hash: a1b2c3d4e5f6...89abcdef
+  Hash length: 64 characters
+✅ Hash keys are 64 characters (SHA-256)
+
+📅 Validation 4: Temporal Fields
+─────────────────────────────────
+  ✓ All Satellite records have valid_from populated
+  ✓ Load date range: 2025-12-29 to 2025-12-29
+✅ Temporal fields validation passed
+
+🔗 Validation 5: Foreign Key Integrity
+───────────────────────────────────────
+  ✓ All Links reference existing Hub_Customer records
+✅ Foreign key integrity validated
+
+╔════════════════════════════════════════════════════════════════╗
+║              ✅ ALL VALIDATIONS PASSED                        ║
+╚════════════════════════════════════════════════════════════════╝
+```
+
+---
+
+### Sub-Task 3: Run Bronze ETL from Airflow UI
+
+**Objective:** Test orchestration workflow and validate production-like execution.
+
+#### 3.1 Prerequisites
+
+**Ensure directories exist:**
+```bash
+# Linux/Mac
+mkdir -p airflow/dags airflow/logs jars
+
+# Windows
+New-Item -ItemType Directory -Force -Path airflow\dags, airflow\logs, jars
+```
+
+**Verify JAR exists:**
+```bash
+# Linux/Mac
+ls -la jars/data-vault-etl-assembly-0.1.0.jar
+
+# Windows
+Test-Path jars\data-vault-etl-assembly-0.1.0.jar
+```
+
+#### 3.2 Install and Configure Airflow (Native - Cross-Platform)
+
+**Install Airflow (one-time setup):**
+```bash
+# Create virtual environment
+python -m venv venv
+
+# Activate (Linux/Mac)
+source venv/bin/activate
+
+# Activate (Windows)
+.\venv\Scripts\Activate.ps1
+
+# Install Airflow
+pip install apache-airflow==2.8.1
+pip install apache-airflow-providers-apache-spark
+
+# Set AIRFLOW_HOME (Linux/Mac)
+export AIRFLOW_HOME=$(pwd)
+
+# Set AIRFLOW_HOME (Windows PowerShell)
+$env:AIRFLOW_HOME = (Get-Location).Path
+
+# Initialize Airflow database
+airflow db init
+
+# Create admin user
+airflow users create \
+  --username admin \
+  --password admin \
+  --firstname Admin \
+  --lastname User \
+  --role Admin \
+  --email admin@local.dev
+```
+
+**Set Airflow variables:**
+```bash
+# Linux/Mac
+airflow variables set BRONZE_JAR_PATH "$(pwd)/jars/data-vault-etl-assembly-0.1.0.jar"
+airflow variables set WAREHOUSE_PATH "$(pwd)/warehouse"
+
+# Windows PowerShell
+airflow variables set BRONZE_JAR_PATH "$(Get-Location)\jars\data-vault-etl-assembly-0.1.0.jar"
+airflow variables set WAREHOUSE_PATH "$(Get-Location)\warehouse"
+```
+
+#### 3.3 Start Airflow Services
+
+**Terminal 1 - Start webserver:**
+```bash
+# Linux/Mac
+export AIRFLOW_HOME=$(pwd)
+airflow webserver --port 8080
+
+# Windows
+$env:AIRFLOW_HOME = (Get-Location).Path
+airflow webserver --port 8080
+```
+
+**Terminal 2 - Start scheduler:**
+```bash
+# Linux/Mac
+export AIRFLOW_HOME=$(pwd)
+airflow scheduler
+
+# Windows
+$env:AIRFLOW_HOME = (Get-Location).Path
+airflow scheduler
+```
+
+**Access Airflow UI:**
+- URL: `http://localhost:8080`
+- Login: `admin` / `admin`
+
+#### 3.4 Execute the Bronze ETL DAG
+
+**In Airflow UI:**
+
+1. Navigate to **DAGs** page
+2. Find `data_vault_bronze_load` DAG
+3. Toggle **ON** (unpause the DAG)
+4. Click **▶** (Trigger DAG button)
+5. Click on the DAG run to monitor execution
+
+**View task progress:**
+- **Graph View:** Shows task dependencies and status
+  - `validate_staging_data` → `create_iceberg_tables` → `run_bronze_etl` → `validate_bronze_quality`
+- **Grid View:** Shows historical runs
+- **Task Logs:** Click on each task to view detailed logs
+
+**Expected task statuses:**
+```
+✅ validate_staging_data     (success - staging files exist)
+✅ create_iceberg_tables     (success - RawVaultSchema executed)
+✅ run_bronze_etl           (success - data loaded)
+✅ validate_bronze_quality   (success - BronzeValidator passed)
+```
+
+**Execution time:** 1-2 minutes total (includes Spark startup overhead)
+
+#### 3.5 View Task Logs
+
+**Click on `run_bronze_etl` task → Logs:**
+
+**Expected log content:**
+```
+[2025-12-29, 14:30:00 UTC] {subprocess.py:75} INFO - Running command: spark-submit...
+[2025-12-29, 14:30:05 UTC] {subprocess.py:86} INFO - ╔════════════════════════════════════════════════════════════════╗
+[2025-12-29, 14:30:05 UTC] {subprocess.py:86} INFO - ║         DATA VAULT 2.0 - RAW VAULT ETL (BRONZE LAYER)         ║
+[2025-12-29, 14:30:05 UTC] {subprocess.py:86} INFO - ╚════════════════════════════════════════════════════════════════╝
+...
+[2025-12-29, 14:30:45 UTC] {subprocess.py:86} INFO - ✅ Loaded 1000 new customers to Hub_Customer
+...
+[2025-12-29, 14:31:00 UTC] {subprocess.py:86} INFO - ✅ Raw Vault ETL completed successfully
+[2025-12-29, 14:31:01 UTC] {subprocess.py:90} INFO - Command exited with return code 0
+```
+
+---
+
+### Validation Checkpoint (All 3 Sub-Tasks)
+
+| Sub-Task | Success Indicator | Validation Method |
+|----------|------------------|-------------------|
+| **1. IDE Execution** | ✅ Console shows "ETL completed successfully" | IntelliJ console + Scala worksheet queries |
+| **2. spark-submit** | ✅ JAR executes without errors, idempotent re-runs | `sbt "runMain bronze.BronzeValidator"` |
+| **3. Airflow UI** | ✅ All 4 tasks green, DAG run successful | Airflow logs + task status |
+
+**Common Issues & Solutions:**
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| `ClassNotFoundException: org.apache.iceberg.spark.SparkCatalog` | Iceberg JAR not in classpath | Check `build.sbt` dependencies, rebuild with `sbt clean assembly` |
+| `FileNotFoundException: warehouse/staging/customer/*.avro` | NiFi hasn't extracted data yet | Run Stage 2 (NiFi extraction) first |
+| `Table already exists` error | Trying to `createOrReplace()` when should `append()` | Check write mode in code |
+| Airflow DAG not visible | DAG file syntax error | Check `airflow dags list-import-errors` |
+| Spark submit fails with memory error | Insufficient heap space | Increase `--conf spark.driver.memory=4g` |
+
+---
+
+### Additional Reference: Understanding Data Vault Components
+
+#### 3.1: Create Data Vault Tables (Reference)
+
+```bash
 sbt "runMain bronze.RawVaultSchema"
 ```
 
@@ -1836,9 +2324,11 @@ spark.sql("SELECT COUNT(*) FROM gold.fact_transaction").show()
    java -jar avro-tools.jar getschema warehouse\staging\customer\customer_*.avro
    ```
 
-2. **Compare with AvroReader expectations:**
-   - Look at `src/main/scala/bronze/utils/AvroReader.scala`
-   - Function: `getRequiredFieldsForEntity("customer")`
+2. **Compare with Avro schema definition:**
+   - Open `nifi\schemas\customer.avsc`
+   - Required fields are those with:
+     - Non-nullable type (not `["null", "type"]`)
+     - No `default` value
    
 3. **Update NiFi schema:**
    - Edit `nifi\schemas\customer.avsc`

@@ -1,0 +1,138 @@
+{
+  "format-version" : 2,
+  "table-uuid" : "17dabd86-85bc-4630-84d6-c38d6ec05476",
+  "location" : "warehouse/bronze/load_metadata",
+  "last-sequence-number" : 1,
+  "last-updated-ms" : 1767695897594,
+  "last-column-id" : 11,
+  "current-schema-id" : 0,
+  "schemas" : [ {
+    "type" : "struct",
+    "schema-id" : 0,
+    "fields" : [ {
+      "id" : 1,
+      "name" : "load_id",
+      "required" : false,
+      "type" : "long",
+      "doc" : "Unique load identifier"
+    }, {
+      "id" : 2,
+      "name" : "entity_name",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Entity being loaded (customer, account, etc.)"
+    }, {
+      "id" : 3,
+      "name" : "record_source",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Source system"
+    }, {
+      "id" : 4,
+      "name" : "load_date",
+      "required" : false,
+      "type" : "date",
+      "doc" : "Date of load"
+    }, {
+      "id" : 5,
+      "name" : "load_start_timestamp",
+      "required" : false,
+      "type" : "timestamptz",
+      "doc" : "When load started"
+    }, {
+      "id" : 6,
+      "name" : "load_end_timestamp",
+      "required" : false,
+      "type" : "timestamptz",
+      "doc" : "When load completed"
+    }, {
+      "id" : 7,
+      "name" : "load_status",
+      "required" : false,
+      "type" : "string",
+      "doc" : "SUCCESS, FAILED, IN_PROGRESS"
+    }, {
+      "id" : 8,
+      "name" : "records_extracted",
+      "required" : false,
+      "type" : "long",
+      "doc" : "Number of records read from source"
+    }, {
+      "id" : 9,
+      "name" : "records_loaded",
+      "required" : false,
+      "type" : "long",
+      "doc" : "Number of records written to vault"
+    }, {
+      "id" : 10,
+      "name" : "error_message",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Error message if failed"
+    }, {
+      "id" : 11,
+      "name" : "load_duration_seconds",
+      "required" : false,
+      "type" : "int",
+      "doc" : "Duration in seconds"
+    } ]
+  } ],
+  "default-spec-id" : 0,
+  "partition-specs" : [ {
+    "spec-id" : 0,
+    "fields" : [ {
+      "name" : "load_date",
+      "transform" : "identity",
+      "source-id" : 4,
+      "field-id" : 1000
+    } ]
+  } ],
+  "last-partition-id" : 1000,
+  "default-sort-order-id" : 0,
+  "sort-orders" : [ {
+    "order-id" : 0,
+    "fields" : [ ]
+  } ],
+  "properties" : {
+    "owner" : "sofiane",
+    "comment" : "ETL load metadata for audit trail and monitoring",
+    "write.parquet.compression-codec" : "snappy"
+  },
+  "current-snapshot-id" : 8111774561928734034,
+  "refs" : {
+    "main" : {
+      "snapshot-id" : 8111774561928734034,
+      "type" : "branch"
+    }
+  },
+  "snapshots" : [ {
+    "sequence-number" : 1,
+    "snapshot-id" : 8111774561928734034,
+    "timestamp-ms" : 1767695897594,
+    "summary" : {
+      "operation" : "append",
+      "spark.app.id" : "local-1767695892572",
+      "added-data-files" : "1",
+      "added-records" : "1",
+      "added-files-size" : "3085",
+      "changed-partition-count" : "1",
+      "total-records" : "1",
+      "total-files-size" : "3085",
+      "total-data-files" : "1",
+      "total-delete-files" : "0",
+      "total-position-deletes" : "0",
+      "total-equality-deletes" : "0"
+    },
+    "manifest-list" : "warehouse/bronze/load_metadata/metadata/snap-8111774561928734034-1-04599626-45b0-4579-a5dd-8aabe9331dfe.avro",
+    "schema-id" : 0
+  } ],
+  "statistics" : [ ],
+  "snapshot-log" : [ {
+    "timestamp-ms" : 1767695897594,
+    "snapshot-id" : 8111774561928734034
+  } ],
+  "metadata-log" : [ {
+    "timestamp-ms" : 1767695895862,
+    "metadata-file" : "warehouse/bronze/load_metadata/metadata/v1.metadata.json"
+  } ]
+}

@@ -1,0 +1,96 @@
+{
+  "format-version" : 2,
+  "table-uuid" : "acd056b1-4adc-44d7-957e-367e696a060f",
+  "location" : "warehouse/bronze/hub_transaction",
+  "last-sequence-number" : 1,
+  "last-updated-ms" : 1767697224772,
+  "last-column-id" : 4,
+  "current-schema-id" : 0,
+  "schemas" : [ {
+    "type" : "struct",
+    "schema-id" : 0,
+    "fields" : [ {
+      "id" : 1,
+      "name" : "transaction_hash_key",
+      "required" : false,
+      "type" : "string",
+      "doc" : "MD5 hash of transaction_id"
+    }, {
+      "id" : 2,
+      "name" : "transaction_id",
+      "required" : false,
+      "type" : "int",
+      "doc" : "Business key from source system"
+    }, {
+      "id" : 3,
+      "name" : "load_date",
+      "required" : false,
+      "type" : "date",
+      "doc" : "Date when record was loaded into vault"
+    }, {
+      "id" : 4,
+      "name" : "record_source",
+      "required" : false,
+      "type" : "string",
+      "doc" : "Source system identifier"
+    } ]
+  } ],
+  "default-spec-id" : 0,
+  "partition-specs" : [ {
+    "spec-id" : 0,
+    "fields" : [ {
+      "name" : "load_date",
+      "transform" : "identity",
+      "source-id" : 3,
+      "field-id" : 1000
+    } ]
+  } ],
+  "last-partition-id" : 1000,
+  "default-sort-order-id" : 0,
+  "sort-orders" : [ {
+    "order-id" : 0,
+    "fields" : [ ]
+  } ],
+  "properties" : {
+    "owner" : "sofiane",
+    "comment" : "Data Vault Hub: Transaction business keys only",
+    "write.parquet.compression-codec" : "snappy"
+  },
+  "current-snapshot-id" : 7012703846268315050,
+  "refs" : {
+    "main" : {
+      "snapshot-id" : 7012703846268315050,
+      "type" : "branch"
+    }
+  },
+  "snapshots" : [ {
+    "sequence-number" : 1,
+    "snapshot-id" : 7012703846268315050,
+    "timestamp-ms" : 1767697224772,
+    "summary" : {
+      "operation" : "append",
+      "spark.app.id" : "local-1767697214473",
+      "added-data-files" : "1",
+      "added-records" : "5000",
+      "added-files-size" : "184459",
+      "changed-partition-count" : "1",
+      "total-records" : "5000",
+      "total-files-size" : "184459",
+      "total-data-files" : "1",
+      "total-delete-files" : "0",
+      "total-position-deletes" : "0",
+      "total-equality-deletes" : "0"
+    },
+    "manifest-list" : "warehouse/bronze/hub_transaction/metadata/snap-7012703846268315050-1-c4dc2741-efe1-4a7d-9409-40d1c85e981d.avro",
+    "schema-id" : 0
+  } ],
+  "statistics" : [ ],
+  "snapshot-log" : [ {
+    "timestamp-ms" : 1767697224772,
+    "snapshot-id" : 7012703846268315050
+  } ],
+  "metadata-log" : [ {
+    "timestamp-ms" : 1767695895574,
+    "metadata-file" : "warehouse/bronze/hub_transaction/metadata/v1.metadata.json"
+  } ]
+}
