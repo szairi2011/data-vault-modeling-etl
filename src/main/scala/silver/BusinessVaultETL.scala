@@ -39,9 +39,10 @@ import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.expressions.Window
 import bronze.utils.{IcebergWriter, LoadMetadata}
+import common.{ETLJob, ETLConfig}
 import java.time.LocalDate
 
-object BusinessVaultETL {
+object BusinessVaultETL extends ETLJob {
 
   /**
    * ┌─────────────────────────────────────────────────────────────────┐
@@ -49,76 +50,27 @@ object BusinessVaultETL {
    * └─────────────────────────────────────────────────────────────────┘
    */
   def main(args: Array[String]): Unit = {
-
-    println("""
-         |╔════════════════════════════════════════════════════════════════╗
-         |║      DATA VAULT 2.0 - BUSINESS VAULT ETL (SILVER LAYER)       ║
-         |╚════════════════════════════════════════════════════════════════╝
-         |""".stripMargin)
-
-    // Parse command-line arguments
-    val buildPIT = args.contains("--build-pit") || args.contains("--all")
-    val buildBridge = args.contains("--build-bridge") || args.contains("--all")
-    val snapshotDate = if (args.contains("--date")) {
-      LocalDate.parse(args(args.indexOf("--date") + 1))
-    } else {
-      LocalDate.now()
-    }
-
-    println(s"""
-         |Configuration:
-         |  Build PIT: $buildPIT
-         |  Build Bridge: $buildBridge
-         |  Snapshot Date: $snapshotDate
-         |""".stripMargin)
-
-    // Initialize Spark Session
-    implicit val spark: SparkSession = createSparkSession()
-
-    try {
-      // Create Business Vault tables if not exist
-      BusinessVaultSchema.createAllTables()
-
-      if (buildPIT || (!buildPIT && !buildBridge)) {
-        buildPITTables(snapshotDate)
-      }
-
-      if (buildBridge || (!buildPIT && !buildBridge)) {
-        buildBridgeTables()
-      }
-
-      println("\n✅ Business Vault ETL completed successfully")
-
-    } catch {
-      case e: Exception =>
-        println(s"\n❌ Business Vault ETL failed: ${e.getMessage}")
-        e.printStackTrace()
-        sys.exit(1)
-    } finally {
-      spark.stop()
-    }
+    runMain(args, "DATA VAULT 2.0 - BUSINESS VAULT ETL (SILVER LAYER)")
   }
 
   /**
    * ┌─────────────────────────────────────────────────────────────────┐
-   * │ CREATE SPARK SESSION                                            │
+   * │ EXECUTE ETL BUSINESS LOGIC                                      │
    * └─────────────────────────────────────────────────────────────────┘
    */
-  def createSparkSession(): SparkSession = {
-    println("\n🚀 Initializing Spark Session...")
+  override def execute(spark: SparkSession, config: ETLConfig): Unit = {
+    implicit val implicitSpark: SparkSession = spark
 
-    val spark = SparkSession.builder()
-      .appName("Business Vault ETL - Silver Layer")
-      .config("spark.sql.extensions",
-              "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
-      .config("spark.sql.catalog.spark_catalog", "org.apache.iceberg.spark.SparkCatalog")
-      .config("spark.sql.catalog.spark_catalog.type", "hive")
-      .enableHiveSupport()
-      .getOrCreate()
+    // Create Business Vault tables if not exist
+    BusinessVaultSchema.createAllTables()
 
-    spark.sparkContext.setLogLevel("WARN")
-    println(s"✅ Spark ${spark.version} initialized")
-    spark
+    if (config.buildPIT || (!config.buildPIT && !config.buildBridge)) {
+      buildPITTables(config.snapshotDate)
+    }
+
+    if (config.buildBridge || (!config.buildPIT && !config.buildBridge)) {
+      buildBridgeTables()
+    }
   }
 
   /**

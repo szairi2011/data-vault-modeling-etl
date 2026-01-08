@@ -1,0 +1,3 @@
+-Dsbt.server.forcestart=false
+-Dsbt.server=false
+

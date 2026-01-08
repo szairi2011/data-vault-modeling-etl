@@ -44,9 +44,10 @@ package bronze
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.functions._
 import bronze.utils.{AvroReader, HashKeyGenerator, IcebergWriter, LoadMetadata}
+import common.{ETLJob, ETLConfig}
 import java.time.LocalDate
 
-object RawVaultETL {
+object RawVaultETL extends ETLJob {
 
   /**
    * ┌─────────────────────────────────────────────────────────────────┐
@@ -54,144 +55,40 @@ object RawVaultETL {
    * └─────────────────────────────────────────────────────────────────┘
    */
   def main(args: Array[String]): Unit = {
-
-    println("""
-         |╔════════════════════════════════════════════════════════════════╗
-         |║         DATA VAULT 2.0 - RAW VAULT ETL (BRONZE LAYER)         ║
-         |╚════════════════════════════════════════════════════════════════╝
-         |""".stripMargin)
-
-    // Parse command-line arguments, i.e. --mode (full|incremental), --entity (customer|account|transaction)
-    val mode = if (args.contains("--mode")) {
-      args(args.indexOf("--mode") + 1)
-    } else {
-      "incremental"
-    }
-
-    val entity = if (args.contains("--entity")) {
-      Some(args(args.indexOf("--entity") + 1))
-    } else {
-      None
-    }
-
-    println(s"""
-         |Configuration:
-         |  Mode: $mode (full|incremental)
-         |  Entity: ${entity.getOrElse("all")}
-         |""".stripMargin)
-
-    // Initialize Spark Session with Iceberg support
-    implicit val spark: SparkSession = createSparkSession()
-
-    try {
-      // Create Raw Vault tables if not exist
-      bronze.RawVaultSchema.createAllTables()
-
-      // Log catalog / database context for troubleshooting only
-      println("\n🔍 Verifying Spark catalog context (informational)...")
-      val currentDatabase = spark.sql("SELECT current_database()").first().getString(0)
-      println(s"   Current database: $currentDatabase")
-      val databases = spark.sql("SHOW DATABASES").collect().map(_.getString(0))
-      println(s"   Available databases: ${databases.mkString(", ")}")
-      // IMPORTANT:
-      // - We do NOT call `USE bronze` here.
-      // - All tables are always referenced as `bronze.<table>` fully qualified.
-      //   This makes the job portable across local / remote HMS and avoids
-      //   relying on mutable session state.
-
-      // Process entities (all table references use `bronze.*`)
-      entity match {
-        case Some("customer")    => processCustomer(mode)
-        case Some("account")     => processAccount(mode)
-        case Some("transaction") => processTransaction(mode)
-        case None                 => processAll(mode)
-        case _                    => throw new IllegalArgumentException(s"Unknown entity: ${entity.get}")
-      }
-
-      println("\n✅ Raw Vault ETL completed successfully")
-
-    } catch {
-      case e: Exception =>
-        println(s"\n❌ Raw Vault ETL failed: ${e.getMessage}")
-        e.printStackTrace()
-        sys.exit(1)
-    } finally {
-      spark.stop()
-    }
+    runMain(args, "DATA VAULT 2.0 - RAW VAULT ETL (BRONZE LAYER)")
   }
 
   /**
    * ┌─────────────────────────────────────────────────────────────────┐
-   * │ CREATE SPARK SESSION WITH ICEBERG & HIVE                        │
+   * │ EXECUTE ETL BUSINESS LOGIC                                      │
    * └─────────────────────────────────────────────────────────────────┘
    */
-  def createSparkSession(): SparkSession = {
-    println("\n🚀 Initializing Spark Session with Iceberg catalog (spark_catalog) ...")
+  override def execute(spark: SparkSession, config: ETLConfig): Unit = {
+    implicit val implicitSpark: SparkSession = spark
 
-    // Respecter propriétés JVM puis variables d'env
-    def propOrEnv(prop: String, env: String, default: String = ""): String =
-      Option(System.getProperty(prop))
-        .orElse(sys.env.get(env))
-        .filter(_.nonEmpty)
-        .getOrElse(default)
+    // Create Raw Vault tables if not exist
+    bronze.RawVaultSchema.createAllTables()
 
-    // Apply hadoop home if provided (winutils)
-    Option(System.getProperty("hadoop.home.dir"))
-      .orElse(sys.env.get("HADOOP_HOME"))
-      .foreach(dir => {
-        System.setProperty("hadoop.home.dir", dir)
-        println(s"🔧 hadoop.home.dir = $dir")
-      })
+    // Log catalog / database context for troubleshooting only
+    println("\n🔍 Verifying Spark catalog context (informational)...")
+    val currentDatabase = spark.sql("SELECT current_database()").first().getString(0)
+    println(s"   Current database: $currentDatabase")
+    val databases = spark.sql("SHOW DATABASES").collect().map(_.getString(0))
+    println(s"   Available databases: ${databases.mkString(", ")}")
+    // IMPORTANT:
+    // - We do NOT call `USE bronze` here.
+    // - All tables are always referenced as `bronze.<table>` fully qualified.
+    //   This makes the job portable across local / remote HMS and avoids
+    //   relying on mutable session state.
 
-    // Prefer IPv4 by default (can be overridden)
-    val preferIPv4 = propOrEnv("java.net.preferIPv4Stack", "JAVA_NET_PREFER_IPV4", "true")
-    System.setProperty("java.net.preferIPv4Stack", preferIPv4)
-    println(s"🔧 java.net.preferIPv4Stack = $preferIPv4")
-
-    // Driver networking defaults (allow override)
-    val driverHost = propOrEnv("spark.driver.host", "SPARK_DRIVER_HOST", "127.0.0.1")
-    val bindAddress = propOrEnv("spark.driver.bindAddress", "SPARK_DRIVER_BIND_ADDRESS", driverHost)
-    val driverPortOpt = Option(System.getProperty("spark.driver.port")).orElse(sys.env.get("SPARK_DRIVER_PORT"))
-
-    val warehouse = propOrEnv("spark.sql.catalog.spark_catalog.warehouse", "SPARK_WAREHOUSE", "warehouse")
-    val hmsUriOpt = sys.env.get("HIVE_METASTORE_URI").filter(uri => uri != null && uri.trim.nonEmpty)
-
-    // Base builder with Iceberg SparkCatalog always configured
-    var builder = SparkSession.builder()
-      .appName("Raw Vault ETL - Bronze Layer")
-      .master("local[*]")
-      .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
-      .config("spark.sql.catalog.spark_catalog", "org.apache.iceberg.spark.SparkCatalog")
-      .config("spark.driver.host", driverHost)
-      .config("spark.driver.bindAddress", bindAddress)
-      .config("spark.sql.catalog.spark_catalog.warehouse", warehouse)
-
-    driverPortOpt.foreach(p => builder = builder.config("spark.driver.port", p))
-
-    // Choose catalogue type based on HMS presence, but keep Iceberg catalog name fixed
-    val finalBuilder = hmsUriOpt match {
-      case Some(uri) =>
-        println(s"🔧 Using Iceberg catalog with Hive Metastore -> uri = $uri")
-        builder
-          .config("spark.sql.catalog.spark_catalog.type", "hive")
-          .config("spark.sql.catalog.spark_catalog.uri", uri)
-      case None =>
-        println("🔧 Using Iceberg HadoopCatalog (no Hive Metastore)")
-        builder
-          .config("spark.sql.catalog.spark_catalog.type", "hadoop")
-      // warehouse already set above
+    // Process entities (all table references use `bronze.*`)
+    config.entity match {
+      case Some("customer")    => processCustomer(config.mode)
+      case Some("account")     => processAccount(config.mode)
+      case Some("transaction") => processTransaction(config.mode)
+      case None                => processAll(config.mode)
+      case Some(e)             => throw new IllegalArgumentException(s"Unknown entity: $e")
     }
-
-    // Enable Hive support only when using external HMS (needed for HiveCatalog)
-    val spark = if (hmsUriOpt.isDefined) {
-      finalBuilder.enableHiveSupport().getOrCreate()
-    } else {
-      finalBuilder.getOrCreate()
-    }
-
-    spark.sparkContext.setLogLevel("WARN")
-    println(s"✅ Spark ${spark.version} initialized (catalog=spark_catalog, type=${if (hmsUriOpt.isDefined) "hive" else "hadoop"}, warehouse=$warehouse)")
-    spark
   }
 
 

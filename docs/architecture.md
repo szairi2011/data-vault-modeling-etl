@@ -10,6 +10,7 @@
 - [Data Flow Architecture](#data-flow-architecture)
 - [Technology Stack](#technology-stack)
 - [Design Principles](#design-principles)
+- [ETL Design Patterns](#etl-design-patterns)
 
 ### Part II: Data Models
 - [Source System (ERM)](#source-system-erm)
@@ -319,6 +320,310 @@ Components are loosely coupled:
 - NiFi writes files, Spark reads files (no direct coupling)
 - Each layer can be rebuilt independently
 - Technology swaps are easier (e.g., replace NiFi with Kafka)
+
+---
+
+## ETL Design Patterns
+
+### Modular Architecture for Multi-Mode Execution
+
+The ETL jobs follow a **modular design pattern** that separates cross-cutting concerns from business logic, enabling seamless execution across different environments (IDE, spark-submit, Airflow) without code duplication.
+
+#### Architecture Components
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    ETL MODULAR ARCHITECTURE                             │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────────────────────────────┐
+│  Configuration Layer (common.ConfigLoader)                           │
+│  - Cascading precedence: JVM Props → Env Vars → .properties → Defaults│
+│  - Validates required configuration                                  │
+│  - Supports .properties format for clarity                           │
+└───────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌───────────────────────────────────────────────────────────────────────┐
+│  Session Factory (common.SparkSessionFactory)                        │
+│  - Centralized SparkSession creation                                 │
+│  - Iceberg catalog configuration (Hive or Hadoop)                    │
+│  - Network settings (driver host, port, IPv4)                        │
+└───────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌───────────────────────────────────────────────────────────────────────┐
+│  ETL Job Interface (common.ETLJob trait)                             │
+│  - execute(spark, config) - Pure business logic                      │
+│  - validatePrerequisites(spark, config) - Pre-flight checks          │
+│  - runMain(args, appName) - Standard entry point                     │
+└───────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌───────────────────────────────────────────────────────────────────────┐
+│  Concrete ETL Jobs                                                    │
+│  - bronze.RawVaultETL                                                 │
+│  - silver.BusinessVaultETL                                            │
+│  - gold.DimensionalModelETL                                           │
+└───────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌───────────────────────────────────────────────────────────────────────┐
+│  Execution Modes                                                      │
+│  - IDE: main() → runMain()                                            │
+│  - spark-submit: main() → runMain()                                   │
+│  - Airflow: ETLRunner.runJob(job, config)                            │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+#### Key Design Patterns Applied
+
+**1. Strategy Pattern**
+- `ETLJob` trait defines the execution interface
+- Concrete jobs implement `execute()` with layer-specific logic
+- `SparkSessionFactory` encapsulates session creation strategies (Hive vs Hadoop catalog)
+
+**2. Template Method Pattern**
+- `runMain()` in `ETLJob` trait provides the execution skeleton:
+  1. Parse configuration
+  2. Create SparkSession
+  3. Validate prerequisites
+  4. Execute business logic
+  5. Handle errors
+  6. Cleanup resources
+
+**3. Dependency Injection**
+- `execute()` receives `SparkSession` and `ETLConfig` as parameters
+- No hard dependencies on configuration sources
+- Testable with mock SparkSession
+
+**4. Factory Pattern**
+- `SparkSessionFactory.createSession()` centralizes session creation
+- Configures Iceberg extensions, catalog type, networking
+- Returns fully configured SparkSession
+
+**5. Facade Pattern**
+- `ETLRunner` provides simple API for programmatic invocation
+- Hides complexity of session management and error handling
+- Used by Airflow and orchestration tools
+
+#### Configuration Management
+
+**Cascading Configuration Precedence:**
+
+```
+Priority 1: JVM System Properties
+  ↓ (if not found)
+Priority 2: Environment Variables
+  ↓ (if not found)
+Priority 3: application.properties file
+  ↓ (if not found)
+Priority 4: Hardcoded Defaults
+```
+
+**Example:**
+
+```scala
+// ConfigLoader resolves in order:
+val warehouse = ConfigLoader.getString(
+  "spark.sql.catalog.spark_catalog.warehouse",  // JVM property key
+  "SPARK_WAREHOUSE",                             // Env variable key
+  "warehouse"                                    // Default value
+)
+
+// Override at runtime:
+// JVM:  -Dspark.sql.catalog.spark_catalog.warehouse=/custom/path
+// Env:  export SPARK_WAREHOUSE=/custom/path
+// File: spark.sql.catalog.spark_catalog.warehouse=/custom/path
+```
+
+**Configuration File Format:**
+
+Uses `.properties` format (not `.conf`) for:
+- ✅ Simplicity - flat key-value pairs, no nesting
+- ✅ Universal support - Java's built-in `Properties` class
+- ✅ Direct mapping to JVM props and env vars
+- ✅ Familiarity - same format as `spark-defaults.conf`
+
+**Example application.properties:**
+
+```properties
+# Warehouse & Catalog
+spark.sql.catalog.spark_catalog.warehouse=warehouse
+spark.sql.catalog.spark_catalog.uri=thrift://localhost:9083
+
+# Networking
+spark.driver.host=127.0.0.1
+spark.driver.bindAddress=0.0.0.0
+
+# Data Paths
+staging.path=warehouse/staging
+bronze.path=warehouse/bronze
+silver.path=warehouse/silver
+gold.path=warehouse/gold
+
+# ETL Defaults
+etl.mode=incremental
+etl.record.source=PostgreSQL
+```
+
+#### ETL Job Structure
+
+**Old Pattern (Before Refactoring):**
+
+```scala
+object RawVaultETL {
+  def main(args: Array[String]): Unit = {
+    // ❌ Inline arg parsing
+    val mode = if (args.contains("--mode")) args(...) else "incremental"
+    
+    // ❌ Inline SparkSession creation (duplicated across all jobs)
+    val spark = SparkSession.builder()
+      .appName("Raw Vault ETL")
+      .config("spark.sql.extensions", "...")
+      .config("spark.sql.catalog.spark_catalog", "...")
+      // ... 20+ lines of configuration
+      .getOrCreate()
+    
+    try {
+      // ❌ Business logic mixed with infrastructure
+      processCustomer(mode)
+      processAccount(mode)
+    } finally {
+      spark.stop()
+    }
+  }
+}
+```
+
+**New Pattern (After Refactoring):**
+
+```scala
+object RawVaultETL extends ETLJob {
+  // ✅ Thin main() delegates to runMain()
+  def main(args: Array[String]): Unit = {
+    runMain(args, "DATA VAULT 2.0 - RAW VAULT ETL (BRONZE LAYER)")
+  }
+  
+  // ✅ Pure business logic, no infrastructure concerns
+  override def execute(spark: SparkSession, config: ETLConfig): Unit = {
+    implicit val implicitSpark = spark
+    
+    RawVaultSchema.createAllTables()
+    
+    config.entity match {
+      case Some("customer")    => processCustomer(config.mode)
+      case Some("account")     => processAccount(config.mode)
+      case Some("transaction") => processTransaction(config.mode)
+      case None                => processAll(config.mode)
+    }
+  }
+  
+  // ✅ Optional validation
+  override def validatePrerequisites(spark: SparkSession, config: ETLConfig): Unit = {
+    // Check staging data exists, etc.
+  }
+}
+```
+
+#### Execution Modes Comparison
+
+| Mode | Entry Point | SparkSession | Config Source | Use Case |
+|------|-------------|--------------|---------------|----------|
+| **IDE** | `main()` → `runMain()` | `SparkSessionFactory` | Env vars, `.properties`, JVM props | Development, debugging |
+| **sbt runMain** | `main()` → `runMain()` | `SparkSessionFactory` | `.properties`, JVM props | Local testing |
+| **spark-submit** | `main()` → `runMain()` | `SparkSessionFactory` | `--conf` flags, cluster defaults | Production batch |
+| **Airflow** | `ETLRunner.runJob()` | `SparkSessionFactory` | DAG params, `.properties` | Orchestrated workflows |
+
+#### Benefits of This Architecture
+
+**1. No Code Duplication**
+- SparkSession creation logic exists once in `SparkSessionFactory`
+- Configuration loading logic exists once in `ConfigLoader`
+- Execution pattern defined once in `ETLJob.runMain()`
+
+**2. Environment Portability**
+- Same JAR runs in IDE, local Spark, cluster, Airflow
+- Configuration externalized, not hardcoded
+- Easy to switch between Hadoop and Hive catalogs
+
+**3. Testability**
+- `execute()` method is pure function (given spark + config → side effects)
+- Can mock `SparkSession` for unit tests
+- Can inject test configuration via `ETLConfig.fromMap()`
+
+**4. Maintainability**
+- Change catalog type? Update `SparkSessionFactory` once
+- Add new config parameter? Update `ConfigLoader` and `application.properties`
+- Add new job? Extend `ETLJob` trait and implement `execute()`
+
+**5. Flexibility**
+- Override any config at runtime (JVM props, env vars)
+- Run subset of entities: `--entity customer`
+- Run in different modes: `--mode full` or `--mode incremental`
+- Programmatic invocation from Scala/Python
+
+#### Example: Running Across Modes
+
+**Development (IDE with .properties):**
+
+```scala
+// IntelliJ Run Configuration
+// Main class: bronze.RawVaultETL
+// Program arguments: --mode full --entity customer
+// Config loaded from: src/main/resources/application.properties
+```
+
+**Testing (sbt with env override):**
+
+```powershell
+$env:SPARK_WAREHOUSE = "test_warehouse"
+sbt "runMain bronze.RawVaultETL --mode full"
+```
+
+**Production (spark-submit with JVM props):**
+
+```bash
+spark-submit \
+  --class bronze.RawVaultETL \
+  --conf spark.sql.catalog.spark_catalog.warehouse=hdfs://namenode/warehouse \
+  --conf spark.sql.catalog.spark_catalog.uri=thrift://prod-hms:9083 \
+  data-vault-etl.jar \
+  --mode incremental
+```
+
+**Airflow (programmatic invocation):**
+
+```python
+from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
+
+bronze_task = SparkSubmitOperator(
+    task_id='bronze_etl',
+    application='/path/to/data-vault-etl.jar',
+    java_class='bronze.RawVaultETL',
+    application_args=['--mode', 'incremental', '--entity', 'customer'],
+    conf={
+        'spark.sql.catalog.spark_catalog.warehouse': 'hdfs://namenode/warehouse',
+        'spark.sql.catalog.spark_catalog.uri': 'thrift://hms:9083'
+    }
+)
+```
+
+#### Design Trade-offs
+
+**Why .properties instead of Typesafe Config?**
+- ✅ Simpler for ops teams (flat format)
+- ✅ No extra dependency (uses Java's built-in `Properties`)
+- ✅ Direct mapping to CLI flags and env vars
+- ✅ Consistent with Spark's configuration style
+- ❌ No type safety (mitigated by `ConfigLoader.getInt()`, `getBoolean()`)
+- ❌ No nesting (acceptable for our use case)
+
+**Why trait instead of abstract class?**
+- ✅ Scala objects can extend traits (required for singleton pattern)
+- ✅ Future-proof for multiple trait composition
+- ✅ Clearer "interface" semantics
+
+**Why implicit SparkSession?**
+- ✅ Reduces boilerplate in method signatures
+- ✅ Common Spark idiom in Scala
+- ❌ Can be confusing for beginners (documented in comments)
 
 ---
 

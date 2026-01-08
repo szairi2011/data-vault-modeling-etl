@@ -60,46 +60,49 @@ val scalaTestVersion = "3.2.17"
 
 libraryDependencies ++= Seq(
   // ──────────────────────────────────────────────────────────────────────
-  // APACHE SPARK (Core + SQL + Avro)
+  // APACHE SPARK (Core + SQL + Avro + Hive)
   // ──────────────────────────────────────────────────────────────────────
-  // Core Spark functionality (RDDs, DataFrames, SparkSession)
-  "org.apache.spark" %% "spark-core" % sparkVersion excludeAll(
+  // STRATEGY:
+  // - spark-core and spark-sql: marked "provided" (from SPARK_HOME)
+  // - spark-avro and spark-hive: NOT marked "provided" (included in uber JAR)
+  //
+  // REASONING:
+  // - SPARK_HOME contains only basic jars (core, sql, catalyst, etc.)
+  // - spark-avro and spark-hive are optional modules not in default SPARK_HOME
+  // - Including them in uber JAR ensures portability across environments
+
+  // Core Spark functionality (RDDs, DataFrames, SparkSession) - FROM SPARK_HOME
+  "org.apache.spark" %% "spark-core" % sparkVersion % "provided" excludeAll(
     ExclusionRule("com.fasterxml.jackson.core"),
     ExclusionRule("com.fasterxml.jackson.module")
   ),
 
-  // Spark SQL for structured data processing
-  "org.apache.spark" %% "spark-sql" % sparkVersion excludeAll(
+  // Spark SQL for structured data processing - FROM SPARK_HOME
+  "org.apache.spark" %% "spark-sql" % sparkVersion % "provided" excludeAll(
     ExclusionRule("com.fasterxml.jackson.core"),
     ExclusionRule("com.fasterxml.jackson.module")
   ),
 
-  // Spark Avro support for reading/writing Avro files
+  // Spark Avro support for reading/writing Avro files - INCLUDED IN UBER JAR
   "org.apache.spark" %% "spark-avro" % sparkVersion excludeAll(
     ExclusionRule("com.fasterxml.jackson.core"),
     ExclusionRule("com.fasterxml.jackson.module")
   ),
 
-  // Spark Hive support (enables HiveContext and HMS integration)
+  // Spark Hive support (enables HiveContext and HMS integration) - INCLUDED IN UBER JAR
   "org.apache.spark" %% "spark-hive" % sparkVersion excludeAll(
     ExclusionRule("com.fasterxml.jackson.core"),
     ExclusionRule("com.fasterxml.jackson.module")
   ),
 
-  // NOTE: Removed "provided" scope for local development
-  // Add it back when deploying to production cluster with spark-submit
-
   // ──────────────────────────────────────────────────────────────────────
   // APACHE ICEBERG (Table Format)
   // ──────────────────────────────────────────────────────────────────────
+  // NOTE: Iceberg dependencies are NOT marked as "provided" - they will be included in the uber JAR
+  // This ensures the JAR is portable and works in any environment (local or cluster)
+
   // Iceberg Spark runtime for reading/writing Iceberg tables
   "org.apache.iceberg" %% "iceberg-spark-runtime-3.5" % icebergVersion excludeAll(
-    ExclusionRule("com.fasterxml.jackson.core"),
-    ExclusionRule("com.fasterxml.jackson.module")
-  ),
-
-  // Iceberg core library (table format implementation)
-  "org.apache.iceberg" % "iceberg-core" % icebergVersion excludeAll(
     ExclusionRule("com.fasterxml.jackson.core"),
     ExclusionRule("com.fasterxml.jackson.module")
   ),
@@ -110,12 +113,11 @@ libraryDependencies ++= Seq(
     ExclusionRule("com.fasterxml.jackson.module")
   ),
 
-  // WHY ICEBERG:
-  // - ACID transactions
-  // - Schema evolution
-  // - Time travel queries
-  // - Hidden partitioning
-  // - Efficient metadata management
+  // Iceberg core library (table format implementation)
+  "org.apache.iceberg" % "iceberg-core" % icebergVersion excludeAll(
+    ExclusionRule("com.fasterxml.jackson.core"),
+    ExclusionRule("com.fasterxml.jackson.module")
+  ),
 
   // ──────────────────────────────────────────────────────────────────────
   // APACHE HIVE METASTORE
@@ -125,14 +127,6 @@ libraryDependencies ++= Seq(
     ExclusionRule(organization = "org.apache.logging.log4j"),
     ExclusionRule(organization = "org.slf4j"),
     ExclusionRule(organization = "javax.servlet"),
-    ExclusionRule("com.fasterxml.jackson.core"),
-    ExclusionRule("com.fasterxml.jackson.module")
-  ),
-
-  // Hive standalone metastore (for embedded mode)
-  "org.apache.hive" % "hive-standalone-metastore" % hiveVersion excludeAll(
-    ExclusionRule(organization = "org.apache.logging.log4j"),
-    ExclusionRule(organization = "org.slf4j"),
     ExclusionRule("com.fasterxml.jackson.core"),
     ExclusionRule("com.fasterxml.jackson.module")
   ),
@@ -286,10 +280,54 @@ javaOptions ++= Seq(
 )
 
 // ============================================================================
-// ASSEMBLY SETTINGS (Fat JAR)
+// ASSEMBLY SETTINGS (Uber JAR Strategy)
+// ============================================================================
+//
+// STRATEGY: Build a portable uber JAR that works both locally and in cluster
+//
+// EXCLUDED (marked as "provided", not in JAR):
+//   - Spark Core & SQL (from SPARK_HOME)
+//   - Hadoop Client, Common (from cluster or SPARK_HOME)
+//   - Scala library (provided by Spark runtime)
+//
+// INCLUDED (in the uber JAR):
+//   - Spark Avro & Hive (~20-30 MB) - NOT in default SPARK_HOME
+//   - Iceberg runtime, core, and HMS integration (~10-15 MB)
+//   - Hive Metastore client libraries
+//   - PostgreSQL JDBC driver
+//   - Derby embedded database
+//   - Avro libraries
+//   - Jackson 2.15.2 (forced version for compatibility)
+//   - All utility libraries (commons-lang3, config, etc.)
+//
+// WHY THIS APPROACH:
+//   ✅ Same JAR works locally (with local Spark) and in cluster
+//   ✅ No need to install Iceberg or spark-avro/hive separately in cluster
+//   ✅ Avoids version conflicts with cluster-provided Spark/Hadoop
+//   ✅ Reasonable JAR size (~50-60 MB vs 200+ MB if all Spark included)
+//   ✅ No need for --packages flag in spark-submit
+//
+// USAGE:
+//   Build:     sbt clean assembly
+//   Local:     spark-submit --class bronze.RawVaultETL target/scala-2.12/data-vault-modeling-etl-1.0.0.jar
+//   Cluster:   spark-submit --master yarn --class bronze.RawVaultETL data-vault-modeling-etl-1.0.0.jar
+//
 // ============================================================================
 
-// Merge strategy for assembling fat JAR
+// Exclude ONLY spark-core, spark-sql, and Hadoop from the uber JAR
+// spark-avro, spark-hive, Iceberg, and all other dependencies WILL be included
+assembly / assemblyExcludedJars := {
+  val cp = (assembly / fullClasspath).value
+  cp filter { f =>
+    f.data.getName.contains("spark-core") ||
+    f.data.getName.contains("spark-sql") ||
+    f.data.getName.contains("hadoop-client") ||
+    f.data.getName.contains("hadoop-common") ||
+    f.data.getName.contains("scala-library")
+  }
+}
+
+// Merge strategy for assembling uber JAR
 assembly / assemblyMergeStrategy := {
   case PathList("META-INF", xs @ _*) => xs match {
     case "MANIFEST.MF" :: Nil => MergeStrategy.discard
@@ -307,30 +345,18 @@ assembly / assemblyMergeStrategy := {
   case _ => MergeStrategy.first
 }
 
-// Exclude Spark and Hadoop from fat JAR (provided by cluster)
-assembly / assemblyExcludedJars := {
-  val cp = (assembly / fullClasspath).value
-  cp filter { f =>
-    f.data.getName.contains("spark-") ||
-    f.data.getName.contains("hadoop-") ||
-    f.data.getName.contains("scala-library")
-  }
-}
-
-// Assembly JAR name
-assembly / assemblyJarName := s"${name.value}-${version.value}.jar"
-
 // ============================================================================
-// RUN SETTINGS
+// IDE SUPPORT (IntelliJ)
 // ============================================================================
 
-// Fork JVM for run
-run / fork := true
+// NOTE:
+// IDE runtime classpath tweaks were removed on purpose.
+// This project targets spark-submit execution where Spark core/sql are provided by SPARK_HOME/cluster.
 
-// Connect stdin for interactive mode
-run / connectInput := true
+// Same for Test configuration
+// Test / fullClasspath ++= (Provided / fullClasspath).value // <-- Removed: caused sbt error
 
-// Output strategy
+// Output to stdout for better logging
 run / outputStrategy := Some(StdoutOutput)
 
 // ============================================================================
@@ -345,6 +371,28 @@ Test / fork := true
 
 // Test options
 Test / testOptions += Tests.Argument("-oD")
+
+// ============================================================================
+// PROJECT METADATA
+// ============================================================================
+
+licenses := Seq("MIT" -> url("https://opensource.org/licenses/MIT"))
+
+scmInfo := Some(
+  ScmInfo(
+    url("https://github.com/yourusername/data-vault-modeling-etl"),
+    "scm:git@github.com:yourusername/data-vault-modeling-etl.git"
+  )
+)
+
+developers := List(
+  Developer(
+    id = "banking-team",
+    name = "Banking Data Vault Team",
+    email = "datavault@banking.com",
+    url = url("https://github.com/yourusername")
+  )
+)
 
 // ============================================================================
 // CUSTOM TASKS
@@ -394,11 +442,12 @@ cleanData := {
       import java.nio.file.attribute.BasicFileAttributes
 
       Files.walkFileTree(path.toPath, new SimpleFileVisitor[Path] {
-        override def visitFile(file: Path, attrs: BasicFileAttributes) = {
+        override def visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult = {
           Files.delete(file)
           FileVisitResult.CONTINUE
         }
-        override def postVisitDirectory(dir: Path, exc: java.io.IOException) = {
+
+        override def postVisitDirectory(dir: Path, exc: java.io.IOException): FileVisitResult = {
           Files.delete(dir)
           FileVisitResult.CONTINUE
         }
@@ -412,31 +461,7 @@ cleanData := {
 }
 
 // ============================================================================
-// PROJECT METADATA
-// ============================================================================
-
-developers := List(
-  Developer(
-    id = "data-team",
-    name = "Data Engineering Team",
-    email = "data@banking.com",
-    url = url("https://github.com/yourusername")
-  )
-)
-
-licenses := List("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0.txt"))
-
-homepage := Some(url("https://github.com/yourusername/data-vault-modeling-etl"))
-
-scmInfo := Some(
-  ScmInfo(
-    url("https://github.com/yourusername/data-vault-modeling-etl"),
-    "scm:git@github.com:yourusername/data-vault-modeling-etl.git"
-  )
-)
-
-// ============================================================================
-// ALIASES FOR COMMON TASKS
+// COMMAND ALIASES
 // ============================================================================
 
 addCommandAlias("bronze", "runMain bronze.RawVaultETL")

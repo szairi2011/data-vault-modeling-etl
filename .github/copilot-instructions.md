@@ -4,6 +4,47 @@ This file provides context to GitHub Copilot for generating code consistent with
 
 ---
 
+## 🌐 Language & Communication
+
+**IMPORTANT: Always use English for ALL interactions, responses, code comments, documentation, and communication.**
+
+This applies to:
+- All responses to user questions
+- Code generation and comments
+- Documentation and README files
+- Error messages and logging
+- Commit messages and PR descriptions
+- Variable names, method names, and identifiers
+
+**No exceptions.** English is the project's standard language regardless of system locale settings.
+
+---
+
+## 📚 Documentation Standards
+
+**APPROVED DOCUMENTATION FILES (DO NOT CREATE ADDITIONAL ONES):**
+
+The project maintains **ONLY** the following documentation files:
+
+1. **`README.md`** - Project overview, quick start, and links to other docs
+2. **`docs/architecture.md`** - Deep dive into Data Vault 2.0 architecture and data models
+3. **`docs/setup_guide.md`** - Step-by-step setup, execution, build, and deployment instructions
+
+**DO NOT CREATE:**
+- Additional markdown files in root directory
+- Separate deployment guides (include in setup_guide.md)
+- Separate build guides (include in setup_guide.md)
+- Separate configuration guides (include in setup_guide.md)
+- Tutorial files (include in appropriate existing docs)
+- Design decision documents (include in architecture.md)
+
+**When asked to document something:**
+1. First check if it belongs in an existing approved file
+2. Update the appropriate existing file instead of creating new ones
+3. Only suggest new documentation if absolutely critical and get user approval first
+
+---
+
 ## 📋 Project Overview
 
 **Project Type:** End-to-end Data Vault 2.0 implementation for a banking system  
@@ -105,9 +146,47 @@ Every Scala ETL file should follow this template:
 package bronze // or silver, gold, seeder
 
 import org.apache.spark.sql.{SparkSession, DataFrame}
+import common.{ETLJob, ETLConfig}
 
-object ComponentName {
+/**
+ * NEW PATTERN (Modular Design):
+ * - Extends ETLJob trait for consistent execution interface
+ * - Delegates to SparkSessionFactory for session creation
+ * - Uses ConfigLoader for cascading configuration
+ * - Supports IDE, sbt, spark-submit, and Airflow execution
+ */
+object ComponentName extends ETLJob {
   
+  // Thin main() delegates to runMain() from ETLJob trait
+  def main(args: Array[String]): Unit = {
+    runMain(args, "Component Name - Brief Description")
+  }
+  
+  // Pure business logic - no infrastructure concerns
+  override def execute(spark: SparkSession, config: ETLConfig): Unit = {
+    implicit val implicitSpark = spark
+    
+    println("📖 Starting [Component Name]...")
+    
+    // Processing logic here
+    
+    println("✅ [Component Name] completed successfully")
+  }
+  
+  // Optional: validate prerequisites
+  override def validatePrerequisites(spark: SparkSession, config: ETLConfig): Unit = {
+    // Check input data exists, etc.
+  }
+}
+
+/**
+ * LEGACY PATTERN (For reference only - DO NOT use for new code):
+ * - Embedded SparkSession creation
+ * - Inline configuration
+ * - Not easily testable or reusable
+ */
+/*
+object LegacyComponentName {
   def main(args: Array[String]): Unit = {
     implicit val spark: SparkSession = SparkSession.builder()
       .appName("Component Name")
@@ -118,21 +197,13 @@ object ComponentName {
       .getOrCreate()
     
     try {
-      println("📖 Starting [Component Name]...")
-      
       // Processing logic here
-      
-      println("✅ [Component Name] completed successfully")
-    } catch {
-      case e: Exception =>
-        println(s"❌ Error in [Component Name]: ${e.getMessage}")
-        e.printStackTrace()
-        throw e
     } finally {
       spark.stop()
     }
   }
 }
+*/
 ```
 
 ### Utility Classes Pattern
@@ -197,6 +268,236 @@ println("❌ Error: Schema mismatch detected")     // Error
 println("🔍 Validating schema...")                // Validation step
 println("💾 Writing to Iceberg table...")         // Persistence operation
 println("🏗️  Building PIT table...")              // Construction operation
+```
+
+---
+
+## 🔧 Modular ETL Architecture
+
+### Cross-Cutting Concerns Separation
+
+The project uses a **modular design pattern** that separates infrastructure concerns from business logic, enabling:
+- ✅ Multiple execution modes (IDE, sbt, spark-submit, Airflow)
+- ✅ Flexible configuration (JVM props, env vars, .properties files)
+- ✅ No code duplication across ETL jobs
+- ✅ Testable business logic
+- ✅ Easy catalog switching (Hive vs Hadoop)
+
+### Core Components
+
+**1. ConfigLoader (common.ConfigLoader)**
+
+Centralized configuration with cascading precedence:
+
+```scala
+// Precedence: JVM Props → Env Vars → .properties → Default
+val warehouse = ConfigLoader.getString(
+  "spark.sql.catalog.spark_catalog.warehouse",  // Property key
+  "SPARK_WAREHOUSE",                             // Env var key
+  "warehouse"                                    // Default
+)
+
+// Optional values
+val hmsUri = ConfigLoader.getOptionalString(
+  "spark.sql.catalog.spark_catalog.uri",
+  "HIVE_METASTORE_URI"
+)
+
+// Type-safe getters
+val maxRetries = ConfigLoader.getInt("etl.max.retries", "ETL_MAX_RETRIES", 3)
+val enabled = ConfigLoader.getBoolean("etl.validation.enabled", "ETL_VALIDATION_ENABLED", true)
+```
+
+**2. SparkSessionFactory (common.SparkSessionFactory)**
+
+Centralized SparkSession creation:
+
+```scala
+// Creates session with Iceberg, catalog configuration, networking
+val spark = SparkSessionFactory.createSession("My ETL Job")
+
+// Automatically configures:
+// - Iceberg extensions
+// - Catalog type (Hive or Hadoop based on HMS URI presence)
+// - Driver networking (host, bind address, port)
+// - Warehouse location
+// - IPv4 preference
+```
+
+**3. ETLConfig (common.ETLConfig)**
+
+Type-safe job configuration:
+
+```scala
+// From command-line args
+val config = ETLConfig.fromArgs(args)
+// Parses: --mode, --entity, --date, --build-pit, --rebuild-all, etc.
+
+// From map (programmatic)
+val config = ETLConfig.fromMap(Map(
+  "mode" -> "incremental",
+  "entity" -> "customer"
+))
+
+// Access
+config.mode           // "full" or "incremental"
+config.entity         // Option[String]
+config.snapshotDate   // LocalDate
+config.buildPIT       // Boolean (for Silver layer)
+config.rebuildDims    // Boolean (for Gold layer)
+```
+
+**4. ETLJob Trait (common.ETLJob)**
+
+Standard interface for all ETL jobs:
+
+```scala
+trait ETLJob {
+  // Implement this with your business logic
+  def execute(spark: SparkSession, config: ETLConfig): Unit
+  
+  // Optional: pre-flight checks
+  def validatePrerequisites(spark: SparkSession, config: ETLConfig): Unit = {}
+  
+  // Provided: standard main entry point
+  def runMain(args: Array[String], appName: String): Unit
+}
+```
+
+**5. ETLRunner (common.ETLRunner)**
+
+Programmatic execution API for Airflow/orchestration:
+
+```scala
+// Run job with config map
+ETLRunner.runJob(
+  bronze.RawVaultETL,
+  Map("mode" -> "incremental", "entity" -> "customer")
+)
+
+// Run job with args
+ETLRunner.runJobWithArgs(
+  bronze.RawVaultETL,
+  Array("--mode", "full")
+)
+```
+
+### Configuration File Format
+
+**Use `.properties` format (NOT `.conf`):**
+
+```properties
+# src/main/resources/application.properties
+
+# Catalog & Warehouse
+spark.sql.catalog.spark_catalog.warehouse=warehouse
+# spark.sql.catalog.spark_catalog.uri=thrift://localhost:9083
+
+# Networking
+spark.driver.host=127.0.0.1
+spark.driver.bindAddress=0.0.0.0
+spark.master=local[*]
+
+# Data Paths
+staging.path=warehouse/staging
+bronze.path=warehouse/bronze
+silver.path=warehouse/silver
+gold.path=warehouse/gold
+
+# ETL Defaults
+etl.mode=incremental
+etl.record.source=PostgreSQL
+```
+
+**Why .properties?**
+- ✅ Simpler than HOCON (.conf) - flat key-value pairs
+- ✅ No extra dependency - Java's built-in `Properties` class
+- ✅ Direct 1:1 mapping to JVM props and env vars
+- ✅ Familiar to Spark users (same as spark-defaults.conf)
+
+### Execution Modes
+
+| Mode | Entry Point | Config Override Method | Use Case |
+|------|-------------|------------------------|----------|
+| **IDE (IntelliJ)** | `main()` → `runMain()` | Run Config env vars or VM options | Development, debugging |
+| **sbt runMain** | `main()` → `runMain()` | `-Dkey=value` or export | Local testing |
+| **spark-submit** | `main()` → `runMain()` | `--conf key=value` | Production, cluster |
+| **Airflow** | `ETLRunner.runJob()` | DAG conf map | Orchestration |
+
+**Example Commands:**
+
+```powershell
+# IDE - Set in Run Configuration:
+# Main class: bronze.RawVaultETL
+# Program args: --mode full --entity customer
+# Env vars: SPARK_WAREHOUSE=warehouse
+
+# sbt runMain
+sbt "runMain bronze.RawVaultETL --mode full"
+sbt -Dspark.sql.catalog.spark_catalog.warehouse=custom "runMain bronze.RawVaultETL --mode full"
+
+# spark-submit
+spark-submit \
+  --class bronze.RawVaultETL \
+  --conf spark.sql.catalog.spark_catalog.warehouse=warehouse \
+  data-vault-etl.jar \
+  --mode incremental
+
+# Airflow (Python DAG)
+SparkSubmitOperator(
+    application='data-vault-etl.jar',
+    java_class='bronze.RawVaultETL',
+    application_args=['--mode', 'incremental'],
+    conf={'spark.sql.catalog.spark_catalog.warehouse': 'hdfs://namenode/warehouse'}
+)
+```
+
+### When Implementing New ETL Jobs
+
+**DO:**
+- ✅ Extend `common.ETLJob` trait
+- ✅ Implement `execute(spark, config)` with pure business logic
+- ✅ Use `ConfigLoader` for any custom configuration needs
+- ✅ Delegate `main()` to `runMain()`
+- ✅ Use `implicit val implicitSpark = spark` to pass SparkSession to helper methods
+- ✅ Test with different execution modes (IDE, sbt, spark-submit)
+
+**DON'T:**
+- ❌ Create SparkSession manually in `main()`
+- ❌ Hardcode configuration values
+- ❌ Mix infrastructure code with business logic
+- ❌ Use `.mode("overwrite")` in Bronze layer
+- ❌ Duplicate catalog/networking configuration
+
+**Example New ETL Job:**
+
+```scala
+package bronze
+
+import org.apache.spark.sql.SparkSession
+import common.{ETLJob, ETLConfig}
+import bronze.utils.{AvroReader, HashKeyGenerator, IcebergWriter}
+
+object MyNewETL extends ETLJob {
+  
+  def main(args: Array[String]): Unit = {
+    runMain(args, "My New ETL Job")
+  }
+  
+  override def execute(spark: SparkSession, config: ETLConfig): Unit = {
+    implicit val implicitSpark = spark
+    
+    // Read staging data
+    val stagingPath = ConfigLoader.getString("staging.path", "STAGING_PATH", "warehouse/staging")
+    val df = AvroReader.readAvro(s"$stagingPath/my_entity/*.avro")
+    
+    // Generate hash keys
+    val withHashKey = HashKeyGenerator.generateHashKey("entity_hash_key", Seq("entity_id"), df)
+    
+    // Write to bronze
+    IcebergWriter.appendToTable(withHashKey, "bronze", "hub_entity", Seq("load_date"))
+  }
+}
 ```
 
 ---

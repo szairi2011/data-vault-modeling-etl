@@ -46,3 +46,15 @@ build/
 ### Scala ###
 .bsp/
 /nifi/nifi_local_creds.txt
+
+# Iceberg managed table data and metadata (do not version warehouse tables)
+warehouse/bronze/
+warehouse/silver/
+warehouse/gold/
+## warehouse/staging/
+warehouse/metastore_db/
+
+# Optionally ignore Iceberg temp/metadata files if present elsewhere
+**/metadata/
+**/snapshots/
+**/data/

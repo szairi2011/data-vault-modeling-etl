@@ -9,6 +9,7 @@
 ### Part I: Foundation
 - [Prerequisites & Tools](#prerequisites--tools)
 - [Understanding the Pipeline Flow](#understanding-the-pipeline-flow)
+- [Execution Modes](#execution-modes)
 
 ### Part II: Pipeline Execution (Stage by Stage)
 - [Stage 1: PostgreSQL Source System](#stage-1-postgresql-source-system)
@@ -96,6 +97,442 @@ STAGE 5: Gold (Dimensional Model - Spark)
 | **Bronze** | Source systems change frequently | Resilient to schema changes, full history |
 | **Silver** | Data Vault joins are complex | Pre-joined tables for performance |
 | **Gold** | BI tools need star schemas | Fast aggregations, SCD Type 2 history |
+
+---
+
+## Execution Modes
+
+### Overview of Execution Options
+
+The ETL jobs support **three primary execution modes**, all using the same codebase with flexible configuration management:
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│                    EXECUTION MODE OPTIONS                          │
+└────────────────────────────────────────────────────────────────────┘
+
+Mode 1: IDE (IntelliJ IDEA)
+  └─ Best for: Development, debugging, interactive exploration
+  └─ Config: application.properties + environment variables
+  └─ Entry: Right-click Run or Run Configuration
+
+Mode 2: SBT Command Line
+  └─ Best for: Local testing, CI/CD, reproducible builds
+  └─ Config: application.properties + JVM properties
+  └─ Entry: sbt "runMain bronze.RawVaultETL --mode full"
+
+Mode 3: Spark Submit (Production)
+  └─ Best for: Cluster deployment, scheduled jobs, Airflow orchestration
+  └─ Config: --conf flags + application.properties in JAR
+  └─ Entry: spark-submit --class bronze.RawVaultETL data-vault-etl.jar
+```
+
+### Configuration Precedence (All Modes)
+
+All execution modes use the same **cascading configuration** system:
+
+```
+Priority 1: JVM System Properties (-Dkey=value)           ← HIGHEST
+Priority 2: Environment Variables (export KEY=value)
+Priority 3: application.properties file
+Priority 4: Hardcoded defaults in code                    ← LOWEST
+```
+
+**Example:**
+```properties
+# application.properties (default)
+spark.sql.catalog.spark_catalog.warehouse=warehouse
+
+# Override with environment variable
+export SPARK_WAREHOUSE=/custom/warehouse
+
+# Override with JVM property (highest priority)
+-Dspark.sql.catalog.spark_catalog.warehouse=/override/warehouse
+```
+
+---
+
+### Mode 1: IDE Execution (IntelliJ IDEA)
+
+**Setup Steps:**
+
+1. **Create Run Configuration** (Run → Edit Configurations → + Application)
+
+2. **Configure:**
+   - **Main class**: `bronze.RawVaultETL`
+   - **Program arguments**: `--mode full --entity customer`
+   - **Working directory**: `C:\Users\sofiane\work\learn-intellij\data-vault-modeling-etl`
+   - **Environment variables** (optional):
+     ```
+     SPARK_WAREHOUSE=warehouse
+     SPARK_DRIVER_HOST=127.0.0.1
+     HADOOP_HOME=C:/hadoop
+     ```
+   - **VM options** (optional):
+     ```
+     -Dspark.sql.catalog.spark_catalog.warehouse=warehouse
+     -Xmx4g
+     ```
+
+3. **Run** the configuration (Shift+F10 or click Run button)
+
+**Quick Alternative (SBT Console in IDE):**
+
+```powershell
+# IntelliJ Terminal (Alt+F12)
+sbt "runMain bronze.RawVaultETL --mode full"
+```
+
+**Advantages:**
+- ✅ Breakpoint debugging
+- ✅ Variable inspection
+- ✅ Interactive REPL
+- ✅ Hot reload (with JRebel)
+
+**See Also:** [INTELLIJ_RUN_GUIDE.md](../INTELLIJ_RUN_GUIDE.md) for detailed IDE setup
+
+---
+
+### Mode 2: SBT Command Line
+
+**Basic Usage:**
+
+```powershell
+# Navigate to project root
+cd C:\Users\sofiane\work\learn-intellij\data-vault-modeling-etl
+
+# Bronze Layer - Full load all entities
+sbt "runMain bronze.RawVaultETL --mode full"
+
+# Bronze Layer - Incremental load, specific entity
+sbt "runMain bronze.RawVaultETL --mode incremental --entity customer"
+
+# Silver Layer - Build PIT tables for specific date
+sbt "runMain silver.BusinessVaultETL --build-pit --date 2024-01-15"
+
+# Gold Layer - Rebuild dimensions and facts
+sbt "runMain gold.DimensionalModelETL --rebuild-all"
+```
+
+**With JVM Property Overrides:**
+
+```powershell
+# Override warehouse location
+sbt -Dspark.sql.catalog.spark_catalog.warehouse=custom_warehouse "runMain bronze.RawVaultETL --mode full"
+
+# Use external Hive Metastore
+sbt -Dspark.sql.catalog.spark_catalog.uri=thrift://localhost:9083 "runMain bronze.RawVaultETL --mode full"
+
+# Multiple overrides
+sbt -Dspark.driver.host=192.168.1.10 -Dspark.master=local[4] "runMain bronze.RawVaultETL --mode full"
+```
+
+**With Environment Variables:**
+
+```powershell
+# PowerShell
+$env:SPARK_WAREHOUSE = "custom_warehouse"
+$env:HIVE_METASTORE_URI = "thrift://localhost:9083"
+sbt "runMain bronze.RawVaultETL --mode full"
+
+# Bash (Linux/Mac)
+export SPARK_WAREHOUSE=custom_warehouse
+export HIVE_METASTORE_URI=thrift://localhost:9083
+sbt "runMain bronze.RawVaultETL --mode full"
+```
+
+**Advantages:**
+- ✅ No IDE required
+- ✅ Scriptable for automation
+- ✅ Consistent with CI/CD pipelines
+- ✅ Dependency management by SBT
+
+---
+
+### Mode 3: Spark Submit (Production)
+
+**Step 1: Build Deployment JAR (Uber JAR)**
+
+```powershell
+# Clean and build uber JAR with all dependencies
+sbt clean assembly
+
+# Output: target/scala-2.12/data-vault-modeling-etl-1.0.0.jar (~50-60 MB)
+```
+
+**Understanding the Uber JAR Strategy:**
+
+The assembly process creates a **portable uber JAR** that works seamlessly in both local and cluster environments:
+
+**INCLUDED in the JAR (~50-60 MB):**
+- ✅ **spark-avro** (~5-10 MB) - Not in default SPARK_HOME
+- ✅ **spark-hive** (~15-20 MB) - Not in default SPARK_HOME
+- ✅ **Iceberg runtime, core, HMS integration** (~10-15 MB)
+- ✅ Hive Metastore client libraries
+- ✅ PostgreSQL JDBC driver, Derby embedded database
+- ✅ Avro libraries, Jackson 2.15.2
+- ✅ All utility libraries (commons-lang3, config, etc.)
+
+**EXCLUDED from JAR (provided by SPARK_HOME or cluster):**
+- ❌ spark-core, spark-sql, spark-catalyst
+- ❌ hadoop-client, hadoop-common
+- ❌ scala-library, scala-reflect
+
+**Why this approach?**
+1. **Local environment:** Your SPARK_HOME provides core Spark jars, JAR provides Iceberg + extensions
+2. **Cluster environment:** Cluster Spark provides core jars, JAR provides Iceberg + extensions
+3. **No version conflicts:** Core Spark matches runtime environment, extensions are locked in JAR
+4. **Portable:** Same JAR works everywhere without `--packages` flag
+5. **Reasonable size:** 50-60 MB instead of 200+ MB if all Spark was included
+
+**Verify JAR Contents:**
+```powershell
+# Check that Iceberg is included
+jar tf target/scala-2.12/data-vault-modeling-etl-1.0.0.jar | Select-String "iceberg" | Select-Object -First 5
+
+# Expected output:
+# org/apache/iceberg/spark/extensions/IcebergSparkSessionExtensions.class
+# org/apache/iceberg/spark/SparkCatalog.class
+# ...
+
+# Check that spark-avro is included
+jar tf target/scala-2.12/data-vault-modeling-etl-1.0.0.jar | Select-String "spark.*avro" | Select-Object -First 5
+
+# Check that spark-core is NOT included (it's provided)
+jar tf target/scala-2.12/data-vault-modeling-etl-1.0.0.jar | Select-String "spark-core"
+# Expected: No results (excluded)
+```
+
+**Configuration in JAR:**
+
+The uber JAR includes `src/main/resources/application.properties` with default configuration. You can override any property via:
+- `--conf` flag in spark-submit (highest priority)
+- Environment variables
+- JVM properties
+
+Example:
+```powershell
+spark-submit `
+  --conf spark.sql.catalog.spark_catalog.warehouse=/custom/warehouse `
+  --conf spark.driver.host=192.168.1.100 `
+  --class bronze.RawVaultETL `
+  target/scala-2.12/data-vault-modeling-etl-1.0.0.jar
+```
+
+**Step 2: Submit to Spark**
+
+**Local Mode (Quick Start):**
+
+The simplest way to run locally - configuration comes from `application.properties` in the JAR:
+
+```powershell
+# Build the uber JAR
+sbt clean assembly
+
+# Run locally (no --packages needed!)
+spark-submit --class bronze.RawVaultETL --master local[*] target/scala-2.12/data-vault-modeling-etl-1.0.0.jar --mode full
+```
+
+**Local Mode (With Configuration Overrides):**
+
+Override configuration if needed:
+
+```powershell
+spark-submit `
+  --class bronze.RawVaultETL `
+  --master local[*] `
+  --conf spark.sql.catalog.spark_catalog.warehouse=warehouse `
+  --conf spark.driver.host=127.0.0.1 `
+  target/scala-2.12/data-vault-modeling-etl-1.0.0.jar `
+  --mode full
+```
+
+**All ETL Jobs:**
+
+```powershell
+# Bronze Layer - Load all entities
+spark-submit --class bronze.RawVaultETL --master local[*] target/scala-2.12/data-vault-modeling-etl-1.0.0.jar --mode full
+
+# Bronze Layer - Incremental load for specific entity
+spark-submit --class bronze.RawVaultETL --master local[*] target/scala-2.12/data-vault-modeling-etl-1.0.0.jar --mode incremental --entity customer
+
+# Silver Layer - Build PIT tables
+spark-submit --class silver.BusinessVaultETL --master local[*] target/scala-2.12/data-vault-modeling-etl-1.0.0.jar --build-pit
+
+# Gold Layer - Load dimensions and facts
+spark-submit --class gold.DimensionalModelETL --master local[*] target/scala-2.12/data-vault-modeling-etl-1.0.0.jar --rebuild-all
+```
+
+**YARN Cluster Mode:**
+
+```bash
+spark-submit \
+  --class bronze.RawVaultETL \
+  --master yarn \
+  --deploy-mode cluster \
+  --num-executors 10 \
+  --executor-cores 4 \
+  --executor-memory 8g \
+  --conf spark.sql.catalog.spark_catalog.type=hive \
+  --conf spark.sql.catalog.spark_catalog.uri=thrift://hms-server:9083 \
+  --conf spark.sql.catalog.spark_catalog.warehouse=hdfs://namenode/warehouse \
+  --files /etc/hive/conf/hive-site.xml \
+  data-vault-modeling-etl-1.0.0.jar \
+  --mode incremental --entity customer
+```
+```
+
+**Kubernetes Mode:**
+
+```bash
+spark-submit \
+  --class bronze.RawVaultETL \
+  --master k8s://https://k8s-api:6443 \
+  --deploy-mode cluster \
+  --conf spark.kubernetes.container.image=spark:3.5.0 \
+  --conf spark.kubernetes.namespace=data-vault \
+  --conf spark.sql.catalog.spark_catalog.uri=thrift://hms-service:9083 \
+  local:///opt/spark/jars/data-vault-etl.jar \
+  --mode incremental
+```
+
+**Advantages:**
+- ✅ Production-ready deployment
+- ✅ Cluster resource management
+- ✅ Scheduled execution (cron, Airflow)
+- ✅ External configuration via --conf
+
+---
+
+### Mode 4: Airflow Orchestration (Programmatic)
+
+**Using SparkSubmitOperator:**
+
+```python
+from airflow import DAG
+from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
+from datetime import datetime, timedelta
+
+default_args = {
+    'owner': 'data-engineering',
+    'retries': 2,
+    'retry_delay': timedelta(minutes=5)
+}
+
+with DAG(
+    dag_id='data_vault_bronze_etl',
+    default_args=default_args,
+    schedule_interval='0 2 * * *',  # Daily at 2 AM
+    start_date=datetime(2024, 1, 1),
+    catchup=False
+) as dag:
+
+    bronze_customer = SparkSubmitOperator(
+        task_id='bronze_load_customer',
+        application='/opt/jars/data-vault-modeling-etl-assembly-1.0.0.jar',
+        java_class='bronze.RawVaultETL',
+        application_args=[
+            '--mode', 'incremental',
+            '--entity', 'customer'
+        ],
+        conf={
+            'spark.sql.catalog.spark_catalog.warehouse': 'hdfs://namenode/warehouse',
+            'spark.sql.catalog.spark_catalog.uri': 'thrift://hms:9083',
+            'spark.executor.memory': '4g',
+            'spark.executor.cores': '2'
+        },
+        name='bronze-customer-load'
+    )
+
+    bronze_account = SparkSubmitOperator(
+        task_id='bronze_load_account',
+        application='/opt/jars/data-vault-modeling-etl-assembly-1.0.0.jar',
+        java_class='bronze.RawVaultETL',
+        application_args=['--mode', 'incremental', '--entity', 'account'],
+        conf={'spark.sql.catalog.spark_catalog.warehouse': 'hdfs://namenode/warehouse'},
+        name='bronze-account-load'
+    )
+
+    bronze_customer >> bronze_account  # Sequential execution
+```
+
+**Advantages:**
+- ✅ Workflow orchestration
+- ✅ Dependency management
+- ✅ Monitoring and alerting
+- ✅ Retry logic and backfill
+
+---
+
+### Configuration File Examples
+
+**Development (application.properties):**
+
+```properties
+# Local Hadoop Catalog (no external HMS)
+spark.sql.catalog.spark_catalog.warehouse=warehouse
+spark.driver.host=127.0.0.1
+spark.driver.bindAddress=0.0.0.0
+spark.master=local[*]
+
+# Data paths (relative to project root)
+staging.path=warehouse/staging
+bronze.path=warehouse/bronze
+silver.path=warehouse/silver
+gold.path=warehouse/gold
+
+# ETL defaults
+etl.mode=incremental
+etl.record.source=PostgreSQL
+```
+
+**Staging Environment:**
+
+```properties
+# External Hive Metastore
+spark.sql.catalog.spark_catalog.warehouse=hdfs://staging-namenode/warehouse
+spark.sql.catalog.spark_catalog.uri=thrift://staging-hms:9083
+spark.master=yarn
+spark.submit.deployMode=client
+
+# Data paths (HDFS)
+staging.path=hdfs://staging-namenode/warehouse/staging
+bronze.path=hdfs://staging-namenode/warehouse/bronze
+silver.path=hdfs://staging-namenode/warehouse/silver
+gold.path=hdfs://staging-namenode/warehouse/gold
+```
+
+**Production (minimal .properties, mostly --conf):**
+
+```properties
+# Minimal defaults in JAR
+etl.mode=incremental
+etl.record.source=PostgreSQL
+etl.partition.strategy=days
+```
+
+```bash
+# Override everything via spark-submit --conf
+spark-submit \
+  --conf spark.sql.catalog.spark_catalog.warehouse=hdfs://prod-namenode/warehouse \
+  --conf spark.sql.catalog.spark_catalog.uri=thrift://prod-hms:9083 \
+  ...
+```
+
+---
+
+### Quick Reference: Running Each Layer
+
+| Layer | Command | Description |
+|-------|---------|-------------|
+| **Bronze** | `sbt "runMain bronze.RawVaultETL --mode full"` | Load all entities, full refresh |
+| **Bronze** | `sbt "runMain bronze.RawVaultETL --mode incremental --entity customer"` | Incremental load, single entity |
+| **Silver** | `sbt "runMain silver.BusinessVaultETL --build-pit"` | Build PIT tables for today |
+| **Silver** | `sbt "runMain silver.BusinessVaultETL --build-pit --date 2024-01-15"` | PIT for specific date |
+| **Silver** | `sbt "runMain silver.BusinessVaultETL --all"` | Build PIT + Bridge tables |
+| **Gold** | `sbt "runMain gold.DimensionalModelETL --rebuild-dims"` | Rebuild dimension tables |
+| **Gold** | `sbt "runMain gold.DimensionalModelETL --rebuild-facts"` | Rebuild fact tables |
+| **Gold** | `sbt "runMain gold.DimensionalModelETL --rebuild-all"` | Rebuild dimensions + facts |
 
 ---
 
@@ -2219,7 +2656,15 @@ sbt "runMain seeder.TransactionalDataSeeder"
 sbt "runMain bronze.RawVaultSchema"
 ```
 
-### Daily Operations
+### Build Uber JAR (for spark-submit)
+```powershell
+# Build once, run anywhere (local or cluster)
+sbt clean assembly
+
+# Output: target/scala-2.12/data-vault-modeling-etl-1.0.0.jar (~50-60 MB)
+```
+
+### Daily Operations (via SBT)
 ```powershell
 # 1. Run NiFi flows (extract to Avro)
 # → Open NiFi UI, start flows manually
@@ -2234,6 +2679,29 @@ sbt "runMain silver.BusinessVaultETL --build-bridge"
 # 4. Update Gold
 sbt "runMain gold.DimensionalModelETL --load-dimensions"
 sbt "runMain gold.DimensionalModelETL --load-facts"
+```
+
+### Daily Operations (via spark-submit)
+```powershell
+# 1. Run NiFi flows (extract to Avro)
+# → Open NiFi UI, start flows manually
+
+# 2. Load Bronze (incremental)
+spark-submit --class bronze.RawVaultETL --master local[*] target/scala-2.12/data-vault-modeling-etl-1.0.0.jar --mode incremental
+
+# 3. Refresh Silver
+spark-submit --class silver.BusinessVaultETL --master local[*] target/scala-2.12/data-vault-modeling-etl-1.0.0.jar --build-pit
+
+# 4. Update Gold
+spark-submit --class gold.DimensionalModelETL --master local[*] target/scala-2.12/data-vault-modeling-etl-1.0.0.jar --rebuild-all
+```
+
+### Full Reload (via spark-submit)
+```powershell
+# Complete pipeline from scratch
+spark-submit --class bronze.RawVaultETL --master local[*] target/scala-2.12/data-vault-modeling-etl-1.0.0.jar --mode full
+spark-submit --class silver.BusinessVaultETL --master local[*] target/scala-2.12/data-vault-modeling-etl-1.0.0.jar --build-pit --build-bridge
+spark-submit --class gold.DimensionalModelETL --master local[*] target/scala-2.12/data-vault-modeling-etl-1.0.0.jar --rebuild-all
 ```
 
 ### Validation
@@ -2281,6 +2749,167 @@ spark.sql("SELECT COUNT(*) FROM gold.fact_transaction").show()
    # View last 50 lines
    Get-Content "C:\nifi\nifi-2.7.2\logs\nifi-app.log" -Tail 50
    ```
+
+---
+
+### ClassNotFoundException: IcebergSparkSessionExtensions
+
+**Symptom:**
+```
+WARN SparkSession: Cannot use org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
+java.lang.ClassNotFoundException: org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
+```
+
+**Cause:** Iceberg JARs are not in the classpath when using `spark-submit`
+
+**Fix:**
+
+**Option 1: Use Uber JAR (RECOMMENDED)**
+
+Rebuild the JAR with Iceberg included:
+
+```powershell
+# Clean and rebuild
+sbt clean assembly
+
+# Verify Iceberg is in JAR
+jar tf target/scala-2.12/data-vault-modeling-etl-1.0.0.jar | Select-String "iceberg" | Select-Object -First 5
+
+# Run with spark-submit (no --packages needed)
+spark-submit `
+  --class bronze.RawVaultETL `
+  target/scala-2.12/data-vault-modeling-etl-1.0.0.jar `
+  --mode full
+```
+
+**Option 2: Use --packages flag**
+
+If you prefer a smaller JAR (mark Iceberg as "provided" in build.sbt):
+
+```powershell
+spark-submit `
+  --packages org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.4.3 `
+  --class bronze.RawVaultETL `
+  target/scala-2.12/data-vault-modeling-etl-1.0.0.jar `
+  --mode full
+```
+
+**Current Project Configuration:**
+
+The project uses **Option 1** (uber JAR approach) because:
+- ✅ Same JAR works locally and in cluster
+- ✅ No need for internet access to download packages
+- ✅ Faster startup (no Maven resolution)
+- ✅ Consistent versions across environments
+
+**Verify Your build.sbt:**
+
+Ensure Iceberg dependencies are **NOT** marked as `"provided"`:
+
+```scala
+// CORRECT - Iceberg included in JAR
+"org.apache.iceberg" %% "iceberg-spark-runtime-3.5" % icebergVersion
+
+// WRONG - Would cause ClassNotFoundException
+"org.apache.iceberg" %% "iceberg-spark-runtime-3.5" % icebergVersion % "provided"
+```
+
+---
+
+### Windows: Spark Temp Directory Cleanup Warning
+
+**Symptom:**
+
+After a **successful** job completion, you see this warning:
+
+```
+✅ DATA VAULT 2.0 - RAW VAULT ETL (BRONZE LAYER) completed successfully
+WARN SparkEnv: Exception while deleting Spark temp dir: C:\Users\...\Temp\spark-...\userFiles-...
+java.io.IOException: Failed to delete: ...\data-vault-modeling-etl-1.0.0.jar
+```
+
+**Cause:**
+
+This is a **harmless Windows file locking issue**:
+- The JVM still has a file handle open on the JAR when Spark tries to clean up
+- Windows doesn't allow deleting files that are still open
+- Linux/Unix don't have this issue
+- **Your job completed successfully** - this is just a cleanup warning
+
+**Impact:**
+
+✅ **No impact on job results** - data is processed correctly  
+✅ **Temporary files are cleaned up eventually** - Windows will delete them later  
+⚠️ **Can accumulate temp directories** over time - periodic manual cleanup needed
+
+**Solutions:**
+
+**Option 1: Disable Spark's Automatic Cleanup (RECOMMENDED - Simplest)**
+
+Configure Spark to skip cleanup on shutdown, avoiding the file locking issue entirely.
+
+Add to `src/main/resources/application.properties`:
+
+```properties
+# Disable automatic cleanup on shutdown (prevents Windows file locking warnings)
+spark.worker.cleanup.enabled=false
+```
+
+**Why this works:**
+- ✅ No more warnings - Spark doesn't try to delete files on shutdown
+- ✅ No scripts needed - just configuration
+- ✅ Files are eventually cleaned up by Windows temp directory cleanup or on reboot
+- ✅ Or use the cleanup script when you need: `.\scripts\windows\cleanup-spark-temp.ps1`
+
+**Alternative: Periodic cleanup instead of shutdown cleanup**
+
+If you want Spark to clean old files periodically (not on shutdown):
+
+```properties
+# Clean temp files every 30 minutes (1800 seconds)
+spark.worker.cleanup.interval=1800
+
+# Keep temp files for 7 days (604800 seconds)
+spark.worker.cleanup.appDataTtl=604800
+```
+
+**Option 2: Use Cleanup Script (If You Need Immediate Cleanup)**
+
+Manual cleanup when needed:
+
+```powershell
+# After job completes
+.\scripts\windows\cleanup-spark-temp.ps1
+
+# Or use wrapper script that auto-cleans
+.\scripts\windows\run-etl-with-cleanup.ps1 -Job bronze.RawVaultETL -Args "--mode full"
+```
+
+**Option 3: Ignore the Warning**
+
+The warning is harmless - your job completed successfully. Files will be cleaned up eventually by Windows or on reboot.
+
+**Why This Happens on Windows:**
+
+| OS | File Locking Behavior |
+|----|----------------------|
+| **Windows** | Exclusive locks prevent deletion of open files |
+| **Linux/Unix** | Deletion just unlinks the file, actual removal happens when handle closes |
+
+**Verification:**
+
+After the warning appears, check your data is actually written:
+
+```powershell
+# Verify Bronze tables have data
+spark-submit `
+  --class org.apache.spark.sql.hive.thriftserver.HiveThriftServer2 `
+  --master local[*]
+
+# Then in Beeline or Spark SQL:
+SELECT COUNT(*) FROM bronze.hub_customer;
+SELECT COUNT(*) FROM bronze.sat_customer;
+```
 
 ---
 

@@ -34,9 +34,10 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.expressions.Window
 import bronze.utils.{IcebergWriter, LoadMetadata}
 import gold.utils.SCDType2Handler
+import common.{ETLJob, ETLConfig}
 import java.time.LocalDate
 
-object DimensionalModelETL {
+object DimensionalModelETL extends ETLJob {
 
   /**
    * ┌─────────────────────────────────────────────────────────────────┐
@@ -44,72 +45,30 @@ object DimensionalModelETL {
    * └─────────────────────────────────────────────────────────────────┘
    */
   def main(args: Array[String]): Unit = {
-
-    println("""
-         |╔════════════════════════════════════════════════════════════════╗
-         |║    DATA VAULT 2.0 - DIMENSIONAL MODEL ETL (GOLD LAYER)        ║
-         |╚════════════════════════════════════════════════════════════════╝
-         |""".stripMargin)
-
-    val rebuildAll = args.contains("--rebuild-all")
-    val rebuildDims = args.contains("--rebuild-dims") || rebuildAll
-    val rebuildFacts = args.contains("--rebuild-facts") || rebuildAll
-
-    println(s"""
-         |Configuration:
-         |  Rebuild Dimensions: $rebuildDims
-         |  Rebuild Facts: $rebuildFacts
-         |""".stripMargin)
-
-    implicit val spark: SparkSession = createSparkSession()
-
-    try {
-      // Create dimensional model tables
-      DimensionalModelSchema.createAllTables()
-
-      // Load date dimension first (required for facts)
-      loadDateDimension()
-
-      if (rebuildDims) {
-        loadDimensions()
-      }
-
-      if (rebuildFacts) {
-        loadFacts()
-      }
-
-      println("\n✅ Dimensional Model ETL completed successfully")
-
-    } catch {
-      case e: Exception =>
-        println(s"\n❌ Dimensional Model ETL failed: ${e.getMessage}")
-        e.printStackTrace()
-        sys.exit(1)
-    } finally {
-      spark.stop()
-    }
+    runMain(args, "DATA VAULT 2.0 - DIMENSIONAL MODEL ETL (GOLD LAYER)")
   }
 
   /**
    * ┌─────────────────────────────────────────────────────────────────┐
-   * │ CREATE SPARK SESSION                                            │
+   * │ EXECUTE ETL BUSINESS LOGIC                                      │
    * └─────────────────────────────────────────────────────────────────┘
    */
-  def createSparkSession(): SparkSession = {
-    println("\n🚀 Initializing Spark Session...")
+  override def execute(spark: SparkSession, config: ETLConfig): Unit = {
+    implicit val implicitSpark: SparkSession = spark
 
-    val spark = SparkSession.builder()
-      .appName("Dimensional Model ETL - Gold Layer")
-      .config("spark.sql.extensions",
-              "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
-      .config("spark.sql.catalog.spark_catalog", "org.apache.iceberg.spark.SparkCatalog")
-      .config("spark.sql.catalog.spark_catalog.type", "hive")
-      .enableHiveSupport()
-      .getOrCreate()
+    // Create dimensional model tables
+    DimensionalModelSchema.createAllTables()
 
-    spark.sparkContext.setLogLevel("WARN")
-    println(s"✅ Spark ${spark.version} initialized")
-    spark
+    // Load date dimension first (required for facts)
+    loadDateDimension()
+
+    if (config.rebuildDims) {
+      loadDimensions()
+    }
+
+    if (config.rebuildFacts) {
+      loadFacts()
+    }
   }
 
   /**
